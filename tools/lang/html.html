@@ -1,0 +1,497 @@
+<!--
+https://whatwg.org/ 14 May 2026
+HTML 4.01 https://www.w3.org/TR/html4/ 27 March 2018
+XHTML 2.0 https://www.w3.org/TR/xhtml2/ 16 December 2010
+XHTML 1.0 https://www.w3.org/TR/xhtml1/ 27 March 2018
+https://developer.mozilla.org/en-US/docs/Web/HTML
+-->
+<?xml version encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC>
+<!-- Global https://html.spec.whatwg.org/multipage/dom.html#global-attributes -->
+<!-- https://html.spec.whatwg.org/multipage/popover.html -->
+<html
+	class id slot
+	accesskey
+	autocapitalize="off none on sentences words characters"
+	autocorrect="on off"
+	autofocus
+	contenteditable="true false plaintext-only"
+	dir="ltr rtl auto"
+	draggable="true false"
+	enterkeyhint="enter done go next previous search send"
+	headingoffset
+	headingreset="true false"
+	hidden="hidden until-found"
+	inert
+	inputmode="none text tel url email numeric decimal search"
+	is
+	itemid
+	itemprop
+	itemref
+	itemscope
+	itemtype
+	lang="en" xml:lang xml:base
+	xmlns xmlns:xsi xsi:schemaLocation
+	nonce
+	popover="auto manual hint" popovertarget="toggle show hide" popovertargetaction
+	spellcheck="true false"
+	style
+	tabindex
+	title
+	translate="yes no"
+	writingsuggestions="true false"
+>
+	<head>
+		<title></title>
+		<!-- https://html.spec.whatwg.org/multipage/semantics.html -->
+		<base href target>
+		<!-- Link types https://html.spec.whatwg.org/multipage/links.html#linkTypes -->
+		<!-- Referrer Policy https://www.w3.org/TR/referrer-policy/ 26 January 2017 -->
+		<!-- https://fetch.spec.whatwg.org/#concept-request-destination -->
+		<link href
+			crossorigin="anonymous use-credentials"
+			rel="alternate canonical author bookmark dns-prefetch expect external help icon manifest modulepreload license next nofollow noopener noreferrer opener pingback preconnect prefetch preload prerender prev privacy-policy search stylesheet tag terms-of-service"
+			media integrity hreflang type="text/plain text/css"
+			referrerpolicy="no-referrer no-referrer-when-downgrade same-origin origin strict-origin origin-when-cross-origin strict-origin-when-cross-origin unsafe-url"
+			sizes imagesrcset imagesizes
+			as="fetch"
+			blocking="render" color disabled
+			fetchpriority="high low auto" title>
+		<!-- Standard metadata names https://html.spec.whatwg.org/multipage/semantics.html#standard-metadata-names -->
+		<meta name="application-name author description generator keywords referrer theme-color color-scheme "
+			http-equiv="content-language content-type default-style refresh set-cookie x-ua-compatible content-security-policy"
+			content charset="utf-8" media>
+		<meta name="referrer" content="never default always origin-when-crossorigin">
+		<!-- https://www.w3.org/TR/css-color-adjust-1/ 16 December 2025 -->
+		<meta name="color-scheme" content="normal dark light only" />
+		<!-- https://www.w3.org/TR/css-viewport-1/ 25 January 2024 -->
+		<!-- https://developer.mozilla.org/en-US/docs/Web/HTML/Viewport_meta_tag -->
+		<meta name="viewport" content="width=device-width, height=device-height, initial-scale=, minimum-scale=, maximum-scale=, user-scalable=yes, interactive-widget=resizes-visual resizes-content overlays-content">
+		<!-- https://developer.mozilla.org/en-US/docs/Web/HTML/Element/meta/name -->
+		<!-- The Open Graph protocol https://ogp.me/ -->
+		<!--
+		<meta name="creator publisher">
+		<meta property="og:title og:type og:image og:url">
+		-->
+		<style media blocking="render" type="text/css" title></style>
+	</head>
+	<!-- event handler content attributes https://html.spec.whatwg.org/multipage/dom.html#global-attributes -->
+	<!-- https://html.spec.whatwg.org/multipage/webappapis.html#events -->
+	<!-- https://developer.mozilla.org/en-US/docs/Web/API/GlobalEventHandlers -->
+	<body
+		onabort
+		onanimationcancel
+		onanimationend
+		onanimationiteration
+		onauxclick
+		onbeforeinput
+		onbeforematch
+		onbeforetoggle
+		onblur*
+		oncancel
+		oncanplay
+		oncanplaythrough
+		onchange
+		onclick
+		onclose
+		oncommand
+		oncontextlost
+		oncontextmenu
+		oncontextrestored
+		oncopy
+		oncuechange
+		oncut
+		ondblclick
+		ondrag
+		ondragend
+		ondragenter
+		ondragexit
+		ondragleave
+		ondragover
+		ondragstart
+		ondrop
+		ondurationchange
+		onemptied
+		onended
+		onerror*
+		onfocus*
+		onformdata
+		ongotpointercapture
+		oninput
+		oninvalid
+		onkeydown
+		onkeypress
+		onkeyup
+		onload*
+		onloadeddata
+		onloadedmetadata
+		onloadend
+		onloadstart
+		onlostpointercapture
+		onmousedown
+		onmouseenter
+		onmouseleave
+		onmousemove
+		onmouseout
+		onmouseover
+		onmouseup
+		onpaste
+		onpause
+		onplay
+		onplaying
+		onpointercancel
+		onpointerdown
+		onpointerenter
+		onpointerleave
+		onpointermove
+		onpointerout
+		onpointerover
+		onpointerup
+		onprogress
+		onratechange
+		onreset
+		onresize*
+		onscroll*
+		onscrollend*
+		onsecuritypolicyviolation
+		onseeked
+		onseeking
+		onselect
+		onselectionchange
+		onselectstart
+		onshow?
+		onslotchange
+		onstalled
+		onsubmit
+		onsuspend
+		ontimeupdate
+		ontoggle
+		ontouchcancel
+		ontouchstart
+		ontransitioncancel
+		ontransitionend
+		onvolumechange
+		onwaiting
+		onwheel
+
+		onafterprint
+		onbeforeprint
+		onbeforeunload
+		onhashchange
+		onlanguagechange
+		onmessage
+		onmessageerror
+		onoffline
+		ononline
+		onpagehide
+		onpagereveal
+		onpageshow
+		onpageswap
+		onpopstate
+		onrejectionhandled
+		onstorage
+		onunhandledrejection
+		onunload
+	>
+		<!-- Sections https://html.spec.whatwg.org/multipage/sections.html -->
+		<article></article>
+		<section></section>
+		<nav></nav>
+		<aside></aside>
+		<hgroup>
+			<h1></h1>
+			<h2></h2>
+			<h3></h3>
+			<h4></h4>
+			<h5></h5>
+			<h6></h6>
+		</hgroup>
+		<header></header>
+		<footer></footer>
+		<address></address>
+		<!-- Grouping content https://html.spec.whatwg.org/multipage/grouping-content.html -->
+		<p></p>
+		<hr>
+		<pre></pre>
+		<blockquote cite></blockquote>
+		<ol reversed start type="decimal lower-alpha upper-alpha lower-roman upper-roman"></ol>
+		<ul></ul>
+		<menu></menu>
+		<li value></li>
+		<dl></dl>
+		<dt></dt>
+		<dd></dd>
+		<figure></figure>
+		<figcaption></figcaption>
+		<main></main>
+		<search></search>
+		<div></div>
+		<!-- Text-level semantics https://html.spec.whatwg.org/multipage/text-level-semantics.html -->
+		<a href="about blob data http https mailto sms urn tel"
+		target="_blank _self _parent _top" download ping
+		rel rev hreflang type referrerpolicy></a>
+		<em></em>
+		<strong></strong>
+		<small></small>
+		<s></s>
+		<cite></cite>
+		<q cite></q>
+		<dfn title></dfn>
+		<abbr title></abbr>
+		<ruby></ruby>
+		<rt></rt>
+		<rp></rp>
+		<data value></data>
+		<time datetime></time>
+		<code></code>
+		<var></var>
+		<samp></samp>
+		<kbd></kbd>
+		<sub></sub>
+		<sup></sup>
+		<i></i>
+		<b></b>
+		<u></u>
+		<mark></mark>
+		<bdi dir></bdi>
+		<bdo dir></bdo>
+		<span></span>
+		<br>
+		<wbr>
+		<!-- Edits https://html.spec.whatwg.org/multipage/edits.html -->
+		<ins cite datetime></ins>
+		<del cite datetime></del>
+		<!-- Embedded content https://html.spec.whatwg.org/multipage/embedded-content.html -->
+		<picture></picture>
+		<source src type srcset sizes="auto" media width height>
+		<img alt src srcset sizes crossorigin usemap ismap width height
+		decoding="sync async auto" loading="lazy eager" referrerpolicy fetchpriority>
+		<!-- https://html.spec.whatwg.org/multipage/iframe-embed-object.html -->
+		<!-- https://www.w3.org/TR/permissions-policy/ 6 October 2025 -->
+		<!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy -->
+		<iframe src srcdoc name
+		sandbox="allow-downloads allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation allow-top-navigation-to-custom-protocols"
+		allow="self src none"
+		allowfullscreen width height referrerpolicy loading></iframe>
+		<embed src type width height>
+		<object data type name usemap form width height></object>
+		<!-- https://html.spec.whatwg.org/multipage/media.html -->
+		<video src crossorigin poster
+		preload="none metadata auto"
+		autoplay playsinline loop muted controls width height></video>
+		<audio src crossorigin preload autoplay loop muted controls></audio>
+		<track kind="subtitles captions descriptions chapters metadata"
+		src srclang label default
+		onchange
+		onaddtrack
+		onremovetrack
+		oncuechange
+		onenter
+		onexit
+		>
+		<!-- https://html.spec.whatwg.org/multipage/image-maps.html -->
+		<map name></map>
+		<area alt coords href download hreflang ping rel
+		shape="circle circ default poly polygon rect rectangle"
+		target type referrerpolicy>
+		<!-- https://html.spec.whatwg.org/multipage/embedded-content-other.html -->
+		<math></math>
+		<svg></svg>
+		<!-- Tabular data https://html.spec.whatwg.org/multipage/tables.html -->
+		<table border>
+			<caption></caption>
+			<colgroup span>
+				<col span>
+			</colgroup>
+			<thead>
+				<tr><th colspan rowspan headers scope="row col rowgroup colgroup" abbr></th></tr>
+			</thead>
+			<tbody>
+				<tr><td colspan rowspan headers></td></tr>
+			</tbody>
+			<tfoot></tfoot>
+		</table>
+		<!-- https://html.spec.whatwg.org/multipage/forms.html -->
+		<form accept-charset action autocomplete="on off"
+			enctype="application/x-www-form-urlencoded multipart/form-data text/plain"
+			method="get GET post POST dialog" name novalidate target rel>
+			<label for></label>
+			<!-- https://html.spec.whatwg.org/multipage/input.html#the-input-element -->
+			<input accept="audio video image"
+				alpha alt autocomplete checked colorspace="limited-srgb display-p3"
+				dirname disabled form formaction formenctype formmethod formnovalidate formtarget
+				height list max maxlength min minlength multiple name pattern placeholder popovertarget popovertargetaction readonly required size src step
+				type="hidden text search tel url email password date month week time datetime-local number range color checkbox radio file submit image reset button"
+				value width title>
+			<!-- https://html.spec.whatwg.org/multipage/form-elements.html#the-button-element -->
+			<button disabled form formaction formenctype formmethod formnovalidate formtarget name popovertarget popovertargetaction
+				command="toggle-popover show-popover hide-popover close show-modal" commandfor
+				type="submit reset button" value></button>
+			<select autocomplete disabled form multiple name required size>
+				<optgroup disabled label>
+					<option disabled label selected value></option>
+				</optgroup>
+				<selectedcontent></selectedcontent>
+			</select>
+			<datalist></datalist>
+			<textarea autocomplete cols dirname disabled form maxlength minlength name placeholder readonly required rows wrap="soft hard"></textarea>
+			<output for form name></output>
+			<progress value max></progress>
+			<meter value min max low high optimum></meter>
+			<fieldset disabled form name>
+				<legend></legend>
+			</fieldset>
+		</form>
+		<!-- Interactive elements https://html.spec.whatwg.org/multipage/interactive-elements.html -->
+		<details name open></details>
+		<summary></summary>
+		<dialog closedby="any closerequest none" open></dialog>
+		<!-- Scripting https://html.spec.whatwg.org/multipage/scripting.html -->
+		<script src type="text/javascript text/ecmascript text/jscript text/livescript module text/plain text/xml application/octet-stream application/xml"
+			charset nomodule async defer crossorigin integrity referrerpolicy blocking="render" fetchpriority></script>
+		<noscript></noscript>
+		<template shadowrootmode="open closed" shadowrootdelegatesfocus shadowrootslotassignment shadowrootclonable shadowrootserializable shadowrootcustomelementregistry></template>
+		<slot name></slot>
+		<!-- https://html.spec.whatwg.org/multipage/canvas.html -->
+		<canvas width height></canvas>
+		<!-- Microdata https://html.spec.whatwg.org/multipage/microdata.html -->
+		<div itemid itemprop itemref itemscope itemtype></div>
+
+		<!-- Obsolete features https://html.spec.whatwg.org/multipage/obsolete.html -->
+		<!-- Obsolete Elements https://html.spec.whatwg.org/multipage/obsolete.html#non-conforming-features -->
+		<applet archive code codebase datafld datasrc object></applet>
+		<acronym></acronym>
+		<bgsound></bgsound>
+		<basefont color face size>
+		<big></big>
+		<blink></blink>
+		<center></center>
+		<dir compact></dir>
+		<font color face size></font>
+		<frame>
+		<frameset cols rows name scrolling src frameborder longdesc noresize marginheight marginwidth></frameset>
+		<isindex prompt>
+		<keygen autofocus challenge disabled form keytype name>
+		<listing></listing>
+		<marquee behavior bgcolor datafld dataformatas datasrc direction height hspace loop scrollamount scrolldelay truespeed vspace width></marquee>
+		<menuitem></menuitem>
+		<multicol></multicol>
+		<nextid></nextid>
+		<nobr></nobr>
+		<noembed></noembed>
+		<noframes></noframes>
+		<param name value type valuetype>
+		<plaintext></plaintext>
+		<rb></rb>
+		<rtc></rtc>
+		<spacer></spacer>
+		<strike></strike>
+		<tt></tt>
+		<xmp></xmp>
+
+		<!-- Obsolete Attributes -->
+		<html contextmenu dropzone manifest version>
+			<head profile>
+				<meta scheme>
+				<style type></style>
+			</head>
+			<body alink background bgcolor bottommargin leftmargin link marginheight marginwidth rightmargin text topmargin vlink>
+				<a charset coords datafld dataformatas datasrc name methods rev shape urn></a>
+				<area hreflang nohref type>
+				<br clear>
+				<button datafld dataformatas datasrc></button>
+				<div align datafld dataformatas datasrc></div>
+				<dl compact></dl>
+				<embed align hspace name vspace>
+				<form accept>
+					<fieldset datafld></fieldset>
+					<input align border datafld dataformatas datasrc hspace ismap usemap vspace>
+					<label datafld dataformatas datasrc></label>
+					<select datafld dataformatas datasrc>
+						<option dataformatas datasrc name></option>
+					</select>
+				</form>
+				<frame bordercolor datafld datasrc></frame>
+				<h1 align></h1>
+				<hr align color noshade size type width>
+				<iframe align allowtransparency datafld datasrc frameborder framespacing hspace longdesc marginheight marginwidth scrolling vspace></iframe>
+				<img align border datafld datasrc hspace longdesc lowsrc name vspace>
+				<legend align datafld dataformatas datasrc></legend>
+				<link rev charset methods target urn>
+				<menu compact label type></menu>
+				<object align archive border classid code codebase codetype datafld dataformatas datasrc declare hspace standby typemustmatch vspace>
+					<param datafld type valuetype>
+				</object>
+				<ol compact></ol>
+				<p align></p>
+				<pre width></pre>
+				<script charset event for language></script>
+				<table align background bgcolor border bordercolor cellpadding cellspacing datapagesize datasrc frame height rules summary width>
+					<caption align></caption>
+					<thead align background valign char charoff>
+						<tr align background bgcolor char charoff valign>
+							<th align axis background bgcolor char charoff height nowrap valign width></th>
+						</tr>
+					</thead>
+					<colgroup align char charoff valign width>
+						<col align char charoff valign width>
+					</colgroup>
+					<tbody align background char charoff valign>
+						<tr>
+							<td abbr align axis background bgcolor char charoff height nowrap scope valign width></td>
+						</tr>
+					</tbody>
+					<tfoot align background char charoff valign></tfoot>
+				</table>
+				<textarea datafld datasrc></textarea>
+				<ul compact type>
+					<li type></li>
+				</ul>
+			</body>
+		</html>
+
+		<!-- https://www.w3.org/TR/html5-diff/ -->
+		<!-- https://www.w3.org/TR/html5-author/ -->
+		<!-- https://www.w3.org/TR/2014/REC-html5-20141028/ -->
+		<!-- https://www.w3.org/TR/2012/CR-html5-20121217/ -->
+		<!-- https://www.w3.org/html/wiki/Elements.html -->
+		<!-- https://www.w3.org/html/wiki/Attributes/_Global.html -->
+		<!--
+		<html onformchange onforminput onmousewheel onreadystatechange onredo onundo>
+			<audio mediagroup></audio>
+			<command type label icon disabled checked radiogroup command title>
+			<datagrid multiple disabled></datagrid>
+			<datatemplate>
+				<rule condition mode>
+					<nest filter mode></nest>
+				</rule>
+			</datatemplate>
+			<event-source src></event-source>
+			<iframe seamless></iframe>
+			<style scoped></style>
+			<time pubdate></time>
+			<video mediagroup></video>
+		</html>
+		-->
+
+		<!-- https://developer.mozilla.org/en-US/docs/Web/HTML/Element -->
+		<!--
+		<html virtualkeyboardpolicy>
+			<a attributionsrc target="_unfencedTop"></a>
+			<audio disableremoteplayback></audio>
+			<fencedframe allow height width></fencedframe>
+			<iframe allowpaymentrequest browsingtopics credentialless csp></iframe>
+			<img attributionsrc elementtiming>
+			<portal referrerpolicy src></portal>
+			<script attributionsrc></script>
+			<video disablepictureinpicture disableremoteplayback></video>
+		</html>
+		-->
+
+		<!-- RDFa https://www.w3.org/TR/xhtml-rdfa-primer/ 17 March 2015 -->
+		<meta property vocab resource typeof content datatype>
+		<!-- ARIA in HTML https://www.w3.org/TR/html-aria/ 15 April 2026 -->
+		<a role></a>
+		<!-- https://www.w3.org/TR/xhtml2/elements.html -->
+	</body>
+</html>

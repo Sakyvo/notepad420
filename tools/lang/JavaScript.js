@@ -1,0 +1,1174 @@
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Lexical_grammar
+// https://ecma-international.org/publications-and-standards/standards/ecma-262/
+// 2020 https://tc39.es/ecma262/2020/
+// 2021 https://tc39.es/ecma262/2021/
+// 2022 https://tc39.es/ecma262/2022/
+// 2023 https://tc39.es/ecma262/2023/
+// 2024 https://tc39.es/ecma262/2024/
+// 2025 https://tc39.es/ecma262/2025/
+// 2026 https://tc39.es/ecma262/2026/
+// 2027 https://tc39.es/ecma262/
+// https://github.com/tc39/ecma262
+
+//! keywords
+// https://tc39.es/ecma262/#sec-keywords-and-reserved-words
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Lexical_grammar#keywords
+async await
+break
+case catch class const continue
+debugger default delete do
+else export extends
+finally for function
+if import in instanceof
+new
+return
+super switch
+this throw try typeof
+var void
+while with
+yield
+let
+static
+
+// https://tc39.es/ecma262/#sec-global-object
+null true false
+globalThis
+Infinity
+NaN
+undefined
+arguments
+get set of
+
+//! future reserved words
+enum implements interface package private protected public
+// ECMAScript 1 till 3
+// abstract boolean byte char double final float goto int long native short synchronized throws transient volatile
+
+// typeof Operator Results
+// undefined object boolean number string symbol bigint function
+
+// Meta Properties
+// new.target // 2020
+// import.meta // 2020
+
+//! directive		===========================================================
+// https://tc39.es/ecma262/#sec-imports
+// https://tc39.es/ecma262/#sec-exports
+import as from
+import(path) // 2020
+export as
+// export default
+
+// https://nodejs.org/api/globals.html
+__dirname
+__filename
+exports
+module
+require(path)
+
+//! decorators
+// https://github.com/tc39/proposal-decorators
+
+//! JSDoc			===========================================================
+// https://jsdoc.app/
+/**
+ * @abstract @virtual
+ * @access
+ * @alias
+ * @async
+ * @augments @extends
+ * @author
+ * @borrows
+ * @callback
+ * @class @constructor
+ * @classdesc
+ * @constant @const
+ * @constructs
+ * @copyright
+ * @default @defaultvalue
+ * @deprecated
+ * @description @desc
+ * @enum
+ * @event
+ * @example
+ * @exports
+ * @external @host
+ * @file @fileoverview @overview
+ * @fires @emits
+ * @function @func @method
+ * @generator
+ * @global
+ * @hideconstructor
+ * @ignore
+ * @implements
+ * @inheritdoc
+ * @inner
+ * @instance
+ * @interface
+ * @kind
+ * @lends
+ * @license
+ * @listens
+ * @member @var
+ * @memberof
+ * @mixes
+ * @mixin
+ * @module
+ * @name
+ * @namespace
+ * @override
+ * @package
+ * @param @arg @argument
+ * @private
+ * @property @prop
+ * @protected
+ * @public
+ * @readonly
+ * @requires
+ * @returns @return
+ * @see
+ * @since
+ * @static
+ * @summary
+ * @this
+ * @throws @exception
+ * @todo
+ * @tutorial
+ * @type
+ * @typedef
+ * @variation
+ * @version
+ * @yields @yield
+ * {@link } {@linkcode } {@linkplain }
+ * {@tutorial }
+ */
+
+//! API				===========================================================
+// https://tc39.es/ecma262/#sec-function-properties-of-the-global-object
+eval(x)
+isFinite(number)
+isNaN(number)
+parseFloat(string)
+parseInt(string, radix)
+decodeURI(encodedURI)
+decodeURIComponent(encodedURIComponent)
+encodeURI(uri)
+encodeURIComponent(uriComponent)
+escape(string)
+unescape(string)
+
+Object([value]) {
+	assign(target, ...sources)
+	create(O, Properties)
+	defineProperties(O, Properties)
+	defineProperty(O, P, Attributes)
+	entries(O) // 2017
+	freeze(O)
+	fromEntries(iterable) // 2019
+	getOwnPropertyDescriptor(O, P)
+	getOwnPropertyDescriptors(O) // 2017
+	getOwnPropertyNames(O)
+	getOwnPropertySymbols(O)
+	getPrototypeOf(O)
+	groupBy(items, callbackfn) // 2024
+	hasOwn(O, P) // 2022
+	is(value1, value2)
+	isExtensible(O)
+	isFrozen(O)
+	isSealed(O)
+	keys(O)
+	preventExtensions(O)
+	seal(O)
+	setPrototypeOf(O, proto)
+	values(O) // 2017
+	prototype:
+		constructor
+		hasOwnProperty(V)
+		isPrototypeOf(V)
+		propertyIsEnumerable(V)
+		toLocaleString([reserved1 [, reserved2]])
+		toString()
+		valueOf()
+
+		__proto__
+		__defineGetter__(P, getter)
+		__defineSetter__(P, setter)
+		__lookupGetter__(P)
+		__lookupSetter__(P)
+}
+
+Function(p1, p2, … , pn, body) {
+	length
+	name
+	prototype:
+		apply(thisArg, argArray)
+		bind(thisArg, ...args)
+		call(thisArg, ...args)
+		toString()
+}
+
+Boolean(value)
+
+Symbol([description]) {
+	asyncIterator
+	hasInstance
+	isConcatSpreadable
+	iterator
+	match
+	matchAll // 2020
+	replace
+	search
+	species
+	split
+	toPrimitive
+	toStringTag
+	unscopables
+	prototype
+	for(key)
+	keyFor(sym)
+	prototype:
+		description
+}
+
+Error(message [, options]) {
+	cause // 2022
+	message
+	name
+	isError(arg) // 2026
+
+	AggregateError // 2021
+	// Native Error Types
+	EvalError
+	RangeError
+	ReferenceError
+	SyntaxError
+	TypeError
+	URIError
+}
+
+Number(value) {
+	EPSILON
+	MAX_SAFE_INTEGER
+	MAX_VALUE
+	MIN_SAFE_INTEGER
+	MIN_VALUE
+	NaN
+	NEGATIVE_INFINITY
+	POSITIVE_INFINITY
+
+	isFinite(number)
+	isInteger(number)
+	isNaN(number)
+	isSafeInteger(number)
+	parseFloat(string)
+	parseInt(string, radix)
+	prototype:
+		toExponential(fractionDigits)
+		toFixed(fractionDigits)
+		toPrecision(precision)
+}
+
+BigInt(value) {
+	asIntN(bits, bigint)
+	asUintN(bits, bigint)
+}
+
+Math {
+	// E
+	LN10
+	LN2
+	LOG10E
+	LOG2E
+	PI
+	SQRT1_2
+	SQRT2
+	toStringTag
+
+	abs(x)
+	acos(x)
+	acosh(x)
+	asin(x)
+	asinh(x)
+	atan(x)
+	atanh(x)
+	atan2(y, x)
+	cbrt(x)
+	ceil(x)
+	clz32(x)
+	cos(x)
+	cosh(x)
+	exp(x)
+	expm1(x)
+	floor(x)
+	fround(x)
+	f16round(x) // 2025
+	hypot(value1, value2, ...values)
+	imul(x, y)
+	log(x)
+	log1p(x)
+	log10(x)
+	log2(x)
+	max(value1, value2, ...values)
+	min(value1, value2, ...values)
+	pow(base, exponent)
+	random()
+	round(x)
+	sin(x)
+	sinh(x)
+	sqrt(x)
+	sumPrecise(items) // 2026
+	tan(x)
+	tanh(x)
+	trunc(x)
+}
+
+Date(year, month [, date [, hours [, minutes [, seconds [, ms]]]]]) {
+	Date(value)
+	Date()
+	UTC(year [, month [, date [, hours [, minutes [, seconds [, ms]]]]]])
+	now()
+	parse(string)
+	prototype:
+		getDate()
+		getDay()
+		getFullYear()
+		getHours()
+		getMilliseconds()
+		getMinutes()
+		getMonth()
+		getSeconds()
+		getTime()
+		getTimezoneOffset()
+		getUTCDate()
+		getUTCDay()
+		getUTCFullYear()
+		getUTCHours()
+		getUTCMilliseconds()
+		getUTCMinutes()
+		getUTCMonth()
+		getUTCSeconds()
+		setDate(date)
+		setFullYear(year [, month [, date]])
+		setHours(hour [, min [, sec [, ms]]])
+		setMilliseconds(ms)
+		setMinutes(min [, sec [, ms]])
+		setMonth(month [, date])
+		setSeconds(sec [, ms])
+		setTime(time)
+		setUTCDate(date)
+		setUTCFullYear(year [, month [, date]])
+		setUTCHours(hour [, min [, sec [, ms]]])
+		setUTCMilliseconds(ms)
+		setUTCMinutes(min [, sec [, ms]])
+		setUTCMonth(month [, date])
+		setUTCSeconds(sec [, ms])
+		toDateString()
+		toISOString()
+		toJSON(key)
+		toLocaleDateString([reserved1 [, reserved2]])
+		toLocaleTimeString([reserved1 [, reserved2]])
+		toTimeString()
+		toUTCString()
+
+		getYear()
+		setYear(year)
+		toGMTString()
+}
+
+String(value) {
+	fromCharCode(...codeUnits)
+	fromCodePoint(...codePoints)
+	raw(template, ...substitutions)
+	length
+	prototype:
+		at(index) // 2022
+		charAt(pos)
+		charCodeAt(pos)
+		codePointAt(pos)
+		concat(...args)
+		endsWith(searchString [, endPosition])
+		includes(searchString [, position])
+		indexOf(searchString [, position])
+		isWellFormed() // 2024
+		lastIndexOf(searchString [, position])
+		localeCompare(that [, reserved1 [, reserved2]])
+		match(regexp)
+		matchAll(regexp) // 2020
+		normalize([form])
+		padEnd(maxLength [, fillString])
+		padStart(maxLength [, fillString])
+		repeat(count)
+		replace(searchValue, replaceValue)
+		replaceAll(searchValue, replaceValue) // 2021
+		search(regexp)
+		slice(start, end)
+		split(separator, limit)
+		startsWith(searchString [, position])
+		substring(start, end)
+		toLocaleLowerCase([reserved1 [, reserved2]])
+		toLocaleUpperCase([reserved1 [, reserved2]])
+		toLowerCase()
+		toUpperCase()
+		toWellFormed() // 2024
+		trim()
+		trimEnd() // 2019
+		trimStart() // 2019
+		iterator
+			next()
+
+		substr(start, length)
+		anchor(name)
+		big()
+		blink()
+		bold()
+		fixed()
+		fontcolor(color)
+		fontsize(size)
+		italics()
+		link(url)
+		small()
+		strike()
+		sub()
+		sup()
+		trimLeft()
+		trimRight()
+}
+
+RegExp(pattern, flags) {
+	compile(pattern, flags)
+	escape(S) // 2025
+	lastIndex
+	prototype:
+		exec(string)
+		test(S)
+		dotAll // 2018
+		flags
+		global
+		hasIndices // 2022
+		ignoreCase
+		multiline
+		sticky
+		source
+		unicode
+		unicodeSets // 2023
+}
+
+Array(...items) {
+	Array(len)
+	Array()
+	from(items [, mapfn [, thisArg]])
+	fromAsync(items [, mapper [, thisArg]]) // 2026
+	isArray(arg)
+	of(...items)
+	length
+	prototype:
+		at(index) // 2022
+		concat(...items)
+		copyWithin(target, start [, end])
+		entries()
+		every(callbackfn [, thisArg])
+		fill(value [, start [, end]])
+		filter(callbackfn [, thisArg])
+		find(predicate [, thisArg])
+		findIndex(predicate [, thisArg])
+		findLast(predicate [, thisArg]) // 2023
+		findLastIndex(predicate [, thisArg]) // 2023
+		flat([depth]) // 2019
+		flatMap(mapperFunction [, thisArg]) // 2019
+		forEach(callbackfn [, thisArg])
+		includes(searchElement [, fromIndex]) // 2016
+		indexOf(searchElement [, fromIndex])
+		join(separator)
+		keys()
+		lastIndexOf(searchElement [, fromIndex])
+		map(callbackfn [, thisArg])
+		pop()
+		push(...items)
+		reduce(callbackfn [, initialValue])
+		reduceRight(callbackfn [, initialValue])
+		reverse()
+		shift()
+		slice(start, end)
+		some(callbackfn [, thisArg])
+		sort(comparefn)
+		splice(start, deleteCount, ...items)
+		toReversed() // 2023
+		toSorted(comparefn) // 2023
+		toSpliced(start, skipCount, ...items) // 2023
+		unshift(...items)
+		values()
+		with(index, value) // 2023
+		iterator
+		unscopables
+
+	// TypedArray
+		Int8Array
+		Uint8Array
+			fromBase64(string [, options]) // 2026
+			fromHex(string) // 2026
+			setFromHex(string) // 2026
+			toBase64([options]) // 2026
+			toHex() // 2026
+		Uint8ClampedArray
+		Int16Array
+		Uint16Array
+		Int32Array
+		Uint32Array
+		BigInt64Array // 2020
+		BigUint64Array // 2020
+		Float32Array
+		Float64Array
+		Float16Array // 2025
+		prototype:
+			BYTES_PER_ELEMENT
+			buffer
+			byteLength
+			byteOffset
+			set(overloaded [, offset ])
+			subarray(begin, end)
+}
+
+Map([iterable]) {
+	groupBy(items, callbackfn) // 2024
+	prototype:
+		clear()
+		delete(key)
+		entries()
+		forEach(callbackfn [, thisArg])
+		get(key)
+		getOrInsert(key, value) // 2026
+		getOrInsertComputed(key, callback) // 2026
+		has(key)
+		keys()
+		set(key, value)
+		values()
+		size
+		iterator
+		toStringTag
+}
+
+Set([iterable]) {
+	prototype:
+		add(value)
+		clear()
+		delete(value)
+		difference(other) // 2025
+		entries()
+		forEach(callbackfn [, thisArg])
+		has(value)
+		intersection(other) // 2025
+		isDisjointFrom(other) // 2025
+		isSubsetOf(other) // 2025
+		isSupersetOf(other) // 2025
+		keys()
+		symmetricDifference(other) // 2025
+		union(other) // 2025
+		values()
+		size
+}
+
+WeakMap([iterable]) {
+	prototype:
+		delete(key)
+		get(key)
+		getOrInsert(key, value) // 2026
+		getOrInsertComputed(key, callback) // 2026
+		has(key)
+		set(key, value)
+}
+
+WeakSet([iterable]) {
+	prototype:
+		add(value)
+		delete(value)
+		has(value)
+}
+
+ArrayBuffer(length [, options]) {
+	isView(arg)
+	prototype:
+		byteLength
+		detached // 2024
+		maxByteLength // 2024
+		resizable // 2024
+		resize(newLength) // 2024
+		slice(start, end)
+		transfer([newLength]) // 2024
+		transferToFixedLength([newLength]) // 2024
+}
+
+SharedArrayBuffer(length [, options]) {
+	prototype:
+		byteLength
+		grow(newLength) // 2024
+		growable // 2024
+		maxByteLength // 2024
+		slice(start, end)
+}
+
+DataView(buffer [, byteOffset [, byteLength]]) {
+	prototype:
+		buffer
+		byteLength
+		byteOffset
+		getBigInt64(byteOffset [, littleEndian]) // 2020
+		getBigUint64(byteOffset [, littleEndian]) // 2020
+		getFloat16(byteOffset [, littleEndian]) // 2025
+		getFloat32(byteOffset [, littleEndian])
+		getFloat64(byteOffset [, littleEndian])
+		getInt8(byteOffset)
+		getInt16(byteOffset [, littleEndian])
+		getInt16(byteOffset [, littleEndian])
+		getInt32(byteOffset [, littleEndian])
+		getUint8(byteOffset)
+		getUint16(byteOffset [, littleEndian])
+		getUint32(byteOffset [, littleEndian])
+		setBigInt64(byteOffset, value [, littleEndian])
+		setBigUint64(byteOffset, value [, littleEndian])
+		setFloat16(byteOffset, value [, littleEndian]) // 2025
+		setFloat32(byteOffset, value [, littleEndian])
+		setFloat64(byteOffset, value [, littleEndian])
+		setInt8(byteOffset, value)
+		setInt16(byteOffset, value [, littleEndian])
+		setInt32(byteOffset, value [, littleEndian])
+		setUint8(byteOffset, value)
+		setUint16(byteOffset, value [, littleEndian])
+		setUint32(byteOffset, value [, littleEndian])
+}
+
+Atomics {
+	add(typedArray, index, value)
+	and(typedArray, index, value)
+	compareExchange(typedArray, index, expectedValue, replacementValue)
+	exchange(typedArray, index, value)
+	isLockFree(size)
+	load(typedArray, index)
+	or(typedArray, index, value)
+	store(typedArray, index, value)
+	sub(typedArray, index, value)
+	wait(typedArray, index, value, timeout)
+	waitAsync(typedArray, index, value, timeout) // 2024
+	wake(typedArray, index, count)
+	xor(typedArray, index, value)
+}
+
+JSON {
+	isRawJSON(obj) // 2026
+	parse(text [, reviver])
+	rawJSON(text) // 2026
+	stringify(value [, replacer [, space]])
+}
+
+WeakRef(target) { // 2021
+	prototype:
+		deref()
+}
+
+FinalizationRegistry(cleanupCallback) { // 2021
+	prototype:
+		register(target, heldValue [, unregisterToken])
+		unregister(unregisterToken)
+}
+
+Iterator() { // 2025
+	concat(...items) // 2026
+	from(O)
+	prototype:
+		drop(limit)
+		every(predicate)
+		filter(predicate)
+		find(predicate)
+		flatMap(mapper)
+		forEach(procedure)
+		map(mapper)
+		reduce(reducer [, initialValue])
+		some(predicate)
+		take(limit)
+		toArray()
+}
+
+GeneratorFunction(p1, p2, … , pn, body) {
+}
+AsyncGeneratorFunction(p1, p2, … , pn, body) {
+}
+
+// Generator, AsyncGenerator
+{
+	prototype:
+		next(value)
+		return(value)
+		throw(exception)
+}
+
+Promise(executor) {
+	all(iterable)
+	allSettled(iterable) // 2020
+	race(iterable)
+	any(iterable) // 2021
+	reject(r)
+	resolve(x)
+	try(callback, ...args) // 2025
+	withResolvers() // 2024
+	prototype:
+		catch(onRejected)
+		finally(onFinally)
+		then(onFulfilled, onRejected)
+}
+
+AsyncFunction(p1, p2, … , pn, body) {
+}
+
+Reflect {
+	apply(target, thisArgument, argumentsList)
+	construct(target, argumentsList [, newTarget])
+	defineProperty(target, propertyKey, attributes)
+	deleteProperty(target, propertyKey)
+	get(target, propertyKey [, receiver])
+	getOwnPropertyDescriptor(target, propertyKey)
+	getPrototypeOf(target)
+	has(target, propertyKey)
+	isExtensible(target)
+	ownKeys(target)
+	preventExtensions(target)
+	set(target, propertyKey, V [, receiver])
+	setPrototypeOf(target, proto)
+}
+
+Proxy(target, handler) {
+	revocable(target, handler)
+}
+
+// Windows Script Host
+// https://learn.microsoft.com/en-us/previous-versions/ms950396(v=msdn.10)
+// https://developer.mozilla.org/en-US/docs/Archive/Web/JavaScript/Microsoft_Extensions
+ActiveXObject(servername.typename[, location])
+Debug {
+	write([str1 [, str2 [, ... [, strN]]]])
+	writeln([str1 [, str2 [, ... [, strN]]]])
+}
+Enumerator([collection]) {
+	atEnd()
+	item()
+	moveFirst()
+	moveNext()
+}
+VBArray {
+	dimensions()
+	getItem(dimension1[, dimension2, ...], dimensionN)
+	lbound(dimension)
+	toArray()
+	ubound(dimension)
+}
+WScript {
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API
+// https://developer.mozilla.org/en-US/docs/Web/API/Console
+{
+	assert(assertion, obj1 [, obj2, ..., objN])
+	assert(assertion, msg [, subst1, ..., substN]) // C-like message formatting
+	clear()
+	count([label])
+	countReset([label])
+	debug(obj1 [, obj2, ..., objN])
+	debug(msg [, subst1, ..., substN])
+	dir(object)
+	dirxml(object)
+	error(obj1 [, obj2, ..., objN])
+	error(msg [, subst1, ..., substN])
+	exception(obj1 [, obj2, ..., objN])
+	exception(msg [, subst1, ..., substN])
+	group([label])
+	groupCollapsed([label])
+	groupEnd()
+	info(obj1 [, obj2, ..., objN])
+	info(msg [, subst1, ..., substN])
+	log(obj1 [, obj2, ..., objN])
+	log(msg [, subst1, ..., substN])
+	table(data [, columns])
+	time(label)
+	timeEnd(label)
+	timeLog(label)
+	trace( [...any, ...data ])
+	warn(obj1 [, obj2, ..., objN])
+	warn(msg [, subst1, ..., substN])
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model
+// https://developer.mozilla.org/en-US/docs/Web/API/EventTarget
+EventTarget() {
+	addEventListener(type, listener [, options])
+	addEventListener(type, listener [, useCapture])
+	dispatchEvent(event)
+	removeEventListener(type, listener[, options])
+	removeEventListener(type, listener[, useCapture])
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Node
+{
+	baseURI
+	childNodes
+	firstChild
+	isConnected
+	lastChild
+	nextSibling
+	nodeName
+	nodeType
+	nodeValue
+	ownerDocument
+	parentElement
+	parentNode
+	previousSibling
+	textContent
+	appendChild(aChild)
+	cloneNode([deep])
+	compareDocumentPosition(otherNode)
+	contains(otherNode)
+	getRootNode([options])
+	hasChildNodes()
+	insertBefore(newNode, referenceNode)
+	isDefaultNamespace(namespaceURI)
+	isEqualNode(otherNode)
+	isSameNode(otherNode)
+	lookupNamespaceURI(prefix)
+	lookupPrefix(namespace)
+	normalize()
+	removeChild(child)
+	replaceChild(newChild, oldChild)
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Element
+{
+	assignedSlot
+	attributes
+	childElementCount
+	children
+	classList
+	className
+	clientHeight
+	clientLeft
+	clientTop
+	clientWidth
+	firstElementChild
+	id
+	innerHTML
+	lastElementChild
+	localName
+	namespaceURI
+	nextElementSibling
+	outerHTML
+	part
+	prefix
+	previousElementSibling
+	scrollHeight
+	scrollLeft
+	scrollTop
+	scrollWidth
+	shadowRoot
+	slot
+	tagName
+	after(node1, node2, /* ... ,*/ nodeN)
+	animate(keyframes, options)
+	append(param1, param2, /* ... ,*/ paramN)
+	attachShadow(options)
+	before(param1, param2, /* ... ,*/ paramN)
+	checkVisibility([options])
+	closest(selectors)
+	computedStyleMap()
+	getAnimations([options])
+	getAttribute(attributeName)
+	getAttributeNames()
+	getAttributeNode(attrName)
+	getAttributeNodeNS(namespace, nodeName)
+	getAttributeNS(namespace, name)
+	getBoundingClientRect()
+	getClientRects()
+	getElementsByClassName(names)
+	getElementsByTagName(tagName)
+	getElementsByTagNameNS(namespaceURI, localName)
+	hasAttribute(name)
+	hasAttributeNS(namespace,localName)
+	hasAttributes()
+	hasPointerCapture(pointerId)
+	insertAdjacentElement(position, element)
+	insertAdjacentHTML(position, text)
+	insertAdjacentText(position, element)
+	matches(selectorString)
+	prepend(param1, param2, /* ... ,*/ paramN)
+	querySelector(selectors)
+	querySelectorAll(selectors)
+	releasePointerCapture(pointerId)
+	remove()
+	removeAttribute(attrName)
+	removeAttributeNode(attributeNode)
+	removeAttributeNS(namespace, attrName)
+	replaceChildren(param1, param2, /* ... ,*/ paramN)
+	replaceWith(param1, param2, /* ... ,*/ paramN)
+	requestFullscreen([options])
+	requestPointerLock([options])
+	scroll(x-coord, y-coord)
+	scroll(options)
+	scrollBy(x-coord, y-coord)
+	scrollBy(options)
+	scrollIntoView()
+	scrollIntoView(alignToTop)
+	scrollIntoView(scrollIntoViewOptions)
+	scrollTo(x-coord, y-coord)
+	scrollTo(options)
+	setAttribute(name, value)
+	setAttributeNode(attribute)
+	setAttributeNodeNS(attributeNode)
+	setAttributeNS(namespace, name, value)
+	setPointerCapture(pointerId)
+	toggleAttribute(name [, force])
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Document
+Document() {
+	activeElement
+	adoptedStyleSheets
+	body
+	characterSet
+	childElementCount
+	children
+	compatMode
+	contentType
+	cookie
+	currentScript
+	defaultView
+	designMode
+	dir
+	doctype
+	documentElement
+	documentURI
+	domain
+	embeds
+	firstElementChild
+	fonts
+	forms
+	fullscreenElement
+	fullscreenEnabled
+	head
+	hidden
+	images
+	implementation
+	lastElementChild
+	lastModified
+	links
+	location
+	pictureInPictureElement
+	pictureInPictureEnabled
+	plugins
+	pointerLockElement
+	readyState
+	referrer
+	scripts
+	scrollingElement
+	styleSheets
+	timeline
+	title
+	URL
+	visibilityState
+
+	// Methods
+	adoptNode(externalNode)
+	append(param1, param2, /* ... ,*/ paramN)
+	caretPositionFromPoint(x, y)
+	close()
+	createAttribute(name)
+	createAttributeNS(namespaceURI, qualifiedName)
+	createCDATASection(data)
+	createComment(data)
+	createDocumentFragment()
+	createElement(tagName[, options])
+	createElementNS(namespaceURI, qualifiedName[, options])
+	createExpression(xpathText, namespaceURLMapper)
+	createNodeIterator(root[, whatToShow[, filter]])
+	createNSResolver(node)
+	createProcessingInstruction(target, data)
+	createRange()
+	createTextNode(data)
+	createTreeWalker(root, whatToShow, filter)
+	elementFromPoint(x, y)
+	elementsFromPoint(x, y)
+	evaluate(xpathExpression, contextNode, namespaceResolver, resultType, result)
+	exitFullscreen()
+	exitPictureInPicture()
+	getAnimations()
+	getElementById(id)
+	getElementsByClassName(names)
+	getElementsByName(name)
+	getElementsByTagName(name)
+	getElementsByTagNameNS(namespace, name)
+	getSelection()
+	hasFocus()
+	hasStorageAccess()
+	importNode(externalNode [, deep])
+	open()
+	prepend(param1, param2, /* ... ,*/ paramN)
+	querySelector(selectors)
+	querySelectorAll(selectors)
+	replaceChildren(param1, param2, /* ... ,*/ paramN)
+	requestStorageAccess()
+	write(markup)
+	writeln(line)
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Window
+{
+	caches
+	clientInformation
+	closed
+	console
+	crypto
+	customElements
+	devicePixelRatio
+	document
+	event
+	frameElement
+	frames
+	fullScreen
+	history
+	indexedDB
+	innerHeight
+	innerWidth
+	length
+	localStorage
+	location
+	locationbar
+	menubar
+	name
+	navigator
+	opener
+	origin
+	outerHeight
+	outerWidth
+	pageXOffset
+	pageYOffset
+	parent
+	performance
+	personalbar
+	screen
+	screenLeft
+	screenTop
+	screenX
+	screenY
+	scrollbars
+	scrollX
+	scrollY
+	self
+	sessionStorage
+	status
+	statusbar
+	toolbar
+	top
+	visualViewport
+	window
+	alert(message)
+	blur()
+	cancelAnimationFrame(requestID)
+	cancelIdleCallback(handle)
+	close()
+	confirm(message)
+	focus()
+	getComputedStyle(element [, pseudoElt])
+	getSelection()
+	matchMedia(mediaQueryString)
+	moveBy(deltaX, deltaY)
+	moveTo(x, y)
+	open(url, windowName, [windowFeatures])
+	postMessage(message, targetOrigin, [transfer])
+	print()
+	prompt(message, default)
+	requestAnimationFrame(callback)
+	requestIdleCallback(callback[, options])
+	resizeBy(xDelta, yDelta)
+	resizeTo(width, height)
+	scroll(x-coord, y-coord)
+	scroll(options)
+	scrollBy(x-coord, y-coord)
+	scrollBy(options)
+	scrollTo(x-coord, y-coord)
+	scrollTo(options)
+	showOpenFilePicker()
+	showSaveFilePicker()
+	stop()
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest
+XMLHttpRequest() {
+	UNSENT
+	OPENED
+	HEADERS_RECEIVED
+	LOADING
+	DONE
+
+	onreadystatechange
+	readyState
+	response
+	responseText
+	responseType
+	responseURL
+	responseXML
+	status
+	statusText
+	timeout
+	upload
+	withCredentials
+	abort()
+	getAllResponseHeaders()
+	getResponseHeader(headerName)
+	open(method, url [, async [, user[, password]]])
+	overrideMimeType(mimeType)
+	send(body)
+	setRequestHeader(header, value)
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/FormData
+FormData([form]) {
+	append(name, value [, filename])
+	delete(name)
+	entries()
+	get(name)
+	getAll(name)
+	has(name)
+	keys()
+	set(name, value [, filename])
+	values()
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Worker
+Worker() {
+	postMessage(message, transfer)
+	terminate()
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/WorkerGlobalScope
+{
+	caches
+	indexedDB
+	origin
+	scheduler
+	importScripts(path0, path1, /* ... ,*/ pathN)
+	atob(encodedData)
+	btoa(stringToEncode)
+	clearInterval(intervalID)
+	clearTimeout(timeoutID)
+	createImageBitmap(image[, sx, sy, sw, sh[, options]]).then(function(response) { ... })
+	fetch(input[, init]) -> Promise<Response>
+	queueMicrotask(function)
+	setInterval(func, delay[, param1, param2, ...])
+	setTimeout(function[, delay, param1, param2, ...])
+	structuredClone(value[, options])
+	reportError(throwable)
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Storage
+{
+	length
+	clear()
+	getItem(keyName)
+	key(index)
+	removeItem(keyName)
+	setItem(keyName, keyValue)
+}

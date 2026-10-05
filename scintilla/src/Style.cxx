@@ -1,0 +1,71 @@
+// Scintilla source code edit control
+/** @file Style.cxx
+ ** Defines the font and colour style for a class of text.
+ **/
+// Copyright 1998-2001 by Neil Hodgson <neilh@scintilla.org>
+// The License.txt file describes the conditions under which this software may be distributed.
+
+#include <cstdint>
+
+#include <stdexcept>
+#include <utility>
+#include <string_view>
+#include <vector>
+#include <optional>
+#include <memory>
+
+#include "ScintillaTypes.h"
+
+#include "Debugging.h"
+#include "Geometry.h"
+#include "Platform.h"
+
+#include "Style.h"
+
+using namespace Scintilla;
+using namespace Scintilla::Internal;
+
+bool FontSpecification::operator==(const FontSpecification &other) const noexcept {
+	return fontName == other.fontName
+		&& size == other.size
+		&& weight == other.weight
+		&& stretch == other.stretch
+		&& italic == other.italic
+		// && checkMonospaced == other.checkMonospaced
+		&& characterSet == other.characterSet
+		&& extraFontFlag == other.extraFontFlag;
+}
+
+bool FontSpecification::operator<(const FontSpecification &other) const noexcept {
+	if (fontName != other.fontName)
+		return fontName < other.fontName;
+	if (size != other.size)
+		return size < other.size;
+	if (weight != other.weight)
+		return weight < other.weight;
+	if (stretch != other.stretch)
+		return stretch < other.stretch;
+	if (italic != other.italic)
+		return italic < other.italic;
+	// if (checkMonospaced != other.checkMonospaced)
+	// 	return checkMonospaced < other.checkMonospaced;
+	if (characterSet != other.characterSet)
+		return characterSet < other.characterSet;
+	if (extraFontFlag != other.extraFontFlag)
+		return extraFontFlag < other.extraFontFlag;
+	return false;
+}
+
+Style::Style(const char *fontName_) noexcept :
+	FontSpecification(fontName_, Platform::DefaultFontSize() * FontSizeMultiplier) {
+}
+
+void Style::ResetDefault(const char *fontName_) noexcept {
+	font.reset();
+	::new (this)Style(fontName_);
+}
+
+void Style::Copy(std::shared_ptr<Font> font_, const FontMeasurements &fm_) noexcept {
+	font = std::move(font_);
+	static_cast<FontMeasurements &>(*this) = fm_;
+}

@@ -1,0 +1,2736 @@
+// Edit Encoding
+
+#include <windows.h>
+#include <shlwapi.h>
+#include <shellapi.h>
+#include <commctrl.h>
+#include <commdlg.h>
+#include <cstdio>
+#include "SciCall.h"
+#include "VectorISA.h"
+#include "Helpers.h"
+#include "Notepad4.h"
+#include "Edit.h"
+#include "Styles.h"
+#include "Dialogs.h"
+#include "resource.h"
+
+extern bool bSkipUnicodeDetection;
+extern int iDefaultEncoding;
+extern int iDefaultCodePage;
+extern bool bLoadANSIasUTF8;
+extern bool bLoadASCIIasUTF8;
+extern bool bLoadNFOasOEM;
+extern int iDefaultCharSet;
+extern int iSrcEncoding;
+extern int iWeakSrcEncoding;
+extern int iCurrentEncoding;
+
+int g_DOSEncoding;
+
+// Supported Encodings
+static WCHAR wchANSI[16][2];
+static LPWSTR g_AllEncodingLabel = nullptr;
+
+struct NP2EncodingGroup {
+	bool bMapped;		// map code page to index in mEncoding array.
+	const uint16_t idsName;	// resource id for group name
+	// presorted encoding list, code pages before been mapped to index.
+	int encodings[10];	// use fixed array to simplify code
+};
+
+// https://docs.microsoft.com/en-us/windows/desktop/Intl/code-page-identifiers
+// https://www.iana.org/assignments/character-sets/character-sets.xhtml
+// https://en.wikipedia.org/wiki/Windows_code_page
+// https://en.wikipedia.org/wiki/ISO/IEC_8859
+// https://dev.mysql.com/doc/refman/8.0/en/charset-charsets.html
+// https://docs.python.org/3/library/codecs.html#standard-encodings
+
+// https://encoding.spec.whatwg.org/#names-and-labels
+static inline UINT GetEncodingAlias(UINT codePage) noexcept {
+	// prefer Windows ANSI code page to corresponding ISO-8859 encoding
+	// as the former contains more graphic characters in [0x80, 0xff].
+	switch (codePage) {
+	case 28591:	return 1252; // ISO 8859-1
+	case 28599: return 1254; // ISO 8859-9
+	default: return codePage;
+	}
+}
+
+// encoding list, check with tools/Misc.py after make changes
+NP2ENCODING mEncoding[] = {
+	{ CP_ACP, NCP_DEFAULT | NCP_RECODE, IDS_ENCODING_ANSI, "ANSI,ansi,ascii," },
+	{ CP_OEMCP, NCP_8BIT | NCP_RECODE, IDS_ENCODING_OEM, "OEM,oem," },
+	{ 0, NCP_UNICODE | NCP_UNICODE_BOM, IDS_ENCODING_UTF16LE_BOM, "" },
+	{ 0, NCP_UNICODE | NCP_UNICODE_REVERSE | NCP_UNICODE_BOM,IDS_ENCODING_UTF16BE_BOM, "" },
+	{ 0, NCP_UNICODE | NCP_RECODE, IDS_ENCODING_UTF16LE, "UTF-16,utf16,unicode,ucs2,utf16le," },
+	{ 0, NCP_UNICODE | NCP_UNICODE_REVERSE | NCP_RECODE, IDS_ENCODING_UTF16BE, "UTF-16BE,utf16be,unicodebe," },
+	{ CP_UTF8, NCP_UTF8 | NCP_RECODE, IDS_ENCODING_UTF8, "UTF-8,utf8,utf8mb4,cp65001," },
+	{ CP_UTF8, NCP_UTF8 | NCP_UTF8_SIGN, IDS_ENCODING_UTF8BOM, "UTF-8,utf8,utf8mb4,cp65001," },
+	{ CP_UTF7, NCP_7BIT | NCP_RECODE, IDS_ENCODING_UTF7, "UTF-7,utf7," },
+	// Latin-1
+	{ 28591, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_1, "ISO-8859-1,iso88591,cp819,latin1,ibm819,isoir100,l1,latin," },// ISO 8859-1 Latin-1; Western European (ISO)
+	{ 1252, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1252, "Windows-1252,windows1252,cp367,ibm367,us,xansi,cp1252," },// ANSI Latin-1; Western European (Windows)
+	// Windows ANSI
+	{ 1250, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1250, "Windows-1250,windows1250,xcp1250,cp1250," },// ANSI Central European; Central European (Windows)
+	{ 1251, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1251, "Windows-1251,windows1251,xcp1251,cp1251," },// ANSI Cyrillic; Cyrillic (Windows)
+	{ 1253, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1253, "Windows-1253,windows1253,cp1253," },// ANSI Greek; Greek (Windows)
+	{ 1254, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1254, "Windows-1254,windows1254,cp1254," },// ANSI Turkish; Turkish (Windows)
+	{ 1255, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1255, "Windows-1255,windows1255,cp1255," },// ANSI Hebrew; Hebrew (Windows)
+	{ 1256, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1256, "Windows-1256,windows1256,cp1256," },// ANSI Arabic; Arabic (Windows)
+	{ 1257, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1257, "Windows-1257,windows1257,cp1257," },// ANSI Baltic; Baltic (Windows)
+	{ 1258, NCP_8BIT | NCP_RECODE, IDS_ENCODING_WINDOWS1258, "Windows-1258,windows1258,cp1258," },// ANSI/OEM Vietnamese; Vietnamese (Windows)
+	{ 874, NCP_8BIT | NCP_RECODE, IDS_ENCODING_TIS620, "Windows-874,windows874,dos874,cp874,iso885911,tis620,isoir166,thai," },// ANSI/OEM Thai (ISO 8859-11); Thai (Windows)
+	{ 932, NCP_8BIT | NCP_RECODE, IDS_ENCODING_SHIFT_JIS, "Shift-JIS,shiftjis,csshiftjis,cswindows31j,mskanji,xmscp932,xsjis,cp932,sjis,ms932," },// ANSI/OEM Japanese; Japanese (Shift-JIS)
+	{ 936, NCP_8BIT | NCP_RECODE, IDS_ENCODING_GBK, "GBK,gbk,gb2312,chinese,cngb,csgb2312,csgb231280,gb231280,cp936,ms936," },// ANSI/OEM Simplified Chinese (PRC, Singapore); Chinese Simplified (GB2312)
+	{ 949, NCP_8BIT | NCP_RECODE, IDS_ENCODING_UHC, "Windows-949,windows949,ksx1001,ksc56011987,csksc5601,isoir149,korean,ksc56011989,cp949,ms949,uhc," },// ANSI/OEM Korean (Unified Hangul Code)
+	{ 950, NCP_8BIT | NCP_RECODE, IDS_ENCODING_BIG5, "BIG5,big5,cnbig5,csbig5,xxbig5,cp950,ms950," },// ANSI/OEM Traditional Chinese (Taiwan; Hong Kong SAR, PRC); Chinese Traditional (Big5)
+	// ISO-8859
+	{ 28592, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_2, "ISO-8859-2,iso88592,csisolatin2,isoir101,latin2,l2," },// Central European (ISO 8859-2); Central European (ISO)
+	{ 28593, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_3, "ISO-8859-3,iso88593,latin3,isoir109,l3," },// Latin-3 (ISO 8859-3)
+	{ 28594, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_4, "ISO-8859-4,iso88594,csisolatin4,isoir110,latin4,l4," },// Baltic (ISO 8859-4); North European
+	{ 28595, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_5, "ISO-8859-5,iso88595,csisolatincyrillic,cyrillic,isoir144," },// Cyrillic (ISO 8859-5)
+	{ 28596, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_6, "ISO-8859-6,iso88596,arabic,csisolatinarabic,ecma114,isoir127," },// Arabic (ISO 8859-6 Visual)
+	{ 28597, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_7, "ISO-8859-7,iso88597,csisolatingreek,ecma118,elot928,greek,greek8,isoir126," },// Greek (ISO 8859-7)
+	{ 28598, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_8, "ISO-8859-8,iso88598,csisolatinhebrew,hebrew,isoir138,visual," },// Hebrew (ISO 8859-8); Hebrew (ISO-Visual)
+	{ 28599, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_9, "ISO-8859-9,iso88599,csisolatin5,latin5,isoir148,l5," },// Turkish (ISO 8859-9)
+	{ 28600, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_10, "ISO-8859-10,iso885910,windows28600,latin6,l6," },// Nordic (ISO 8859-10)
+	{ 28603, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_13, "ISO-8859-13,iso885913,latin7,l7," },// Estonian (ISO 8859-13)
+	{ 28604, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_14, "ISO-8859-14,iso885914,windows28604,latin8,l8," },// Celtic (ISO 8859-14)
+	{ 28605, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_15, "ISO-8859-15,iso885915,latin9,l9," },// Latin-9 (ISO 8859-15)
+	{ 28606, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_16, "ISO-8859-16,iso885916,windows28606,latin10,l10," },// Latin-10 (ISO 8859-16)
+	// Other
+	{ 54936, NCP_8BIT | NCP_RECODE, IDS_ENCODING_GB18030, "GB18030,gb18030," },// Chinese GB18030
+	{ 20866, NCP_8BIT | NCP_RECODE, IDS_ENCODING_KOI8_R, "koi8-r,koi8r,cskoi8r,koi,koi8," },// Russian (KOI8-R); Cyrillic (KOI8-R)
+	{ 21866, NCP_8BIT | NCP_RECODE, IDS_ENCODING_KOI8_U, "koi8-u,koi8u,koi8ru," },// Ukrainian (KOI8-U); Cyrillic (KOI8-U)
+	{ 20932, NCP_8BIT | NCP_RECODE, IDS_ENCODING_EUC_JP, "euc-jp,eucjp,ujis," },// Japanese (JIS X 0208-1990 & 0212-1990)
+	{ 1361, NCP_8BIT | NCP_RECODE, IDS_ENCODING_JOHAB, "Johab,johab,cp1361,ms1361," },// Korean (Johab)
+	{ 51949, NCP_8BIT | NCP_RECODE, IDS_ENCODING_EUC_KR, "euc-kr,euckr,cseuckr," },// Korean (EUC)
+	{ 38596, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_6I, "ISO-8859-6-I,iso88596i," },// Arabic (ISO 8859-6-I Logical)
+	{ 38598, NCP_8BIT | NCP_RECODE, IDS_ENCODING_ISO8859_8I, "ISO-8859-8-I,iso88598i,logical," },// Hebrew (ISO 8859-8); Hebrew (ISO-Logical)
+	// OEM
+	{ 437, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS437, "IBM437,ibm437,437,cp437,cspc8,codepage437," },// OEM United States
+	{ 850, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS850, "IBM850,ibm850,cp850," },// OEM Multilingual Latin-1; Western European (DOS)
+	{ 858, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS858, "IBM858,ibm858,ibm00858,cp858," },// OEM Multilingual Latin-1 + Euro symbol
+	{ 852, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS852, "IBM852,ibm852,cp852," },// OEM Latin-2; Central European (DOS)
+	{ 720, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS720, "DOS-720,dos720,cp720," },// Arabic (Transparent ASMO); Arabic (DOS)
+	{ 864, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS864, "IBM864,ibm864,cp864," },// OEM Arabic; Arabic (864)
+	{ 775, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS775, "IBM775,ibm775,cp775," },// OEM Baltic; Baltic (DOS)
+	{ 855, NCP_8BIT | NCP_RECODE, IDS_ENCODING_IBM855, "IBM855,ibm855,cp855," },// OEM Cyrillic (primarily Russian)
+	{ 866, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS866, "CP866,cp866,ibm866," },// OEM Russian; Cyrillic (DOS)
+	{ 863, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS863, "IBM863,ibm863,cp863," },// OEM French Canadian; French Canadian (DOS)
+	{ 737, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS737, "IBM737,ibm737,cp737," },// OEM Greek (formerly 437G); Greek (DOS)
+	{ 869, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS869, "IBM869,ibm869,cp869," },// OEM Modern Greek; Greek, Modern (DOS)
+	{ 862, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS862, "DOS-862,dos862,cp862," },// OEM Hebrew; Hebrew (DOS)
+	{ 861, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS861, "IBM861,ibm861,cp861," },// OEM Icelandic; Icelandic (DOS)
+	{ 865, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS865, "IBM865,ibm865,cp865," },// OEM Nordic; Nordic (DOS)
+	{ 860, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS860, "IBM860,ibm860,cp860," },// OEM Portuguese; Portuguese (DOS)
+	{ 857, NCP_8BIT | NCP_RECODE, IDS_ENCODING_DOS857, "IBM857,ibm857,cp857," },// OEM Turkish; Turkish (DOS)
+	// Mac
+	{ 10000, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_ROMAN, "Macintosh,macintosh,macroman," },// MAC Roman; Western European (Mac)
+	{ 10029, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_LATIN2, "x-mac-ce,xmacce,maclatin2," },// MAC Latin-2; Central European (Mac)
+	{ 10004, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_ARABIC, "x-mac-arabic,xmacarabic," },// Arabic (Mac)
+	{ 10008, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_GB2312, "x-mac-chinesesimp,xmacchinesesimp," },// MAC Simplified Chinese (GB 2312); Chinese Simplified (Mac)
+	{ 10002, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_BIG5, "x-mac-chinesetrad,xmacchinesetrad," },// MAC Traditional Chinese (Big5); Chinese Traditional (Mac)
+	{ 10082, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_CROATIAN, "x-mac-croatian,xmaccroatian," },// Croatian (Mac)
+	{ 10007, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_CYRILLIC, "x-mac-cyrillic,xmaccyrillic," },// Cyrillic (Mac)
+	{ 10006, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_GREEK, "x-mac-greek,xmacgreek," },// Greek (Mac)
+	{ 10005, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_HEBREW, "x-mac-hebrew,xmachebrew," },// Hebrew (Mac)
+	{ 10079, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_ICELANDIC, "x-mac-icelandic,xmacicelandic," },// Icelandic (Mac)
+	{ 10001, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_JAPANESE, "x-mac-japanese,xmacjapanese," },// Japanese (Mac)
+	{ 10003, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_KOREAN, "x-mac-korean,xmackorean," },// Korean (Mac)
+	{ 10021, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_THAI, "x-mac-thai,xmacthai," },// Thai (Mac)
+	{ 10081, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_TURKISH, "x-mac-turkish,xmacturkish," },// Turkish (Mac)
+	{ 10010, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_ROMANIAN, "x-mac-romanian,xmacromanian," },// Romanian (Mac)
+	{ 10017, NCP_8BIT | NCP_RECODE, IDS_ENCODING_MAC_UKRAINIAN, "x-mac-ukrainian,xmacukrainian," },// Ukrainian (Mac)
+	//{ NCP_8BIT | NCP_RECODE, 708, "ASMO-708,asmo708,", 0, nullptr },// Arabic (ASMO 708); ISO 8859-6
+	//{ NCP_8BIT | NCP_RECODE, 709, "ASMO-709,asmo709,", 0, nullptr },// Arabic (ASMO-449+, BCON V4)
+	//{ NCP_8BIT | NCP_RECODE, 710, "ASMO-710,asmo710,", 0, nullptr },// Arabic - Transparent Arabic
+	//{ NCP_8BIT | NCP_RECODE, 29001, "x-Europa,xeuropa,", 0, nullptr },// Europa 3
+	{ 37, NCP_8BIT | NCP_RECODE, IDS_ENCODING_IBM037, "ebcdic-cp-us,ebcdiccpus,ebcdiccpca,ebcdiccpwt,ebcdiccpnl,ibm037,cp037," },// IBM EBCDIC US-Canada
+	{ 1140, NCP_8BIT | NCP_RECODE, IDS_ENCODING_IBM1140, "x-ebcdic-cp-us-euro,xebcdiccpuseuro,ibm1140," },// IBM EBCDIC US-Canada (037 + Euro symbol); IBM EBCDIC (US-Canada-Euro)
+	{ 500, NCP_8BIT | NCP_RECODE, IDS_ENCODING_IBM500, "x-ebcdic-international,xebcdicinternational,ibm500,cp500," },// IBM EBCDIC International
+	{ 870, NCP_8BIT | NCP_RECODE, IDS_ENCODING_IBM870, "CP870,cp870,ebcdiccproece,ebcdiccpyu,csibm870,ibm870," },// IBM EBCDIC Multilingual/ROECE (Latin-2); IBM EBCDIC Multilingual Latin-2
+	{ 875, NCP_8BIT | NCP_RECODE, IDS_ENCODING_CP875, "x-EBCDIC-GreekModern,xebcdicgreekmodern,cp875," },// IBM EBCDIC Greek Modern
+	{ 1026, NCP_8BIT | NCP_RECODE, IDS_ENCODING_IBM1026, "CP1026,cp1026,csibm1026,ibm1026," },// IBM EBCDIC Turkish (Latin-5)
+	//{ NCP_8BIT | NCP_RECODE, 1047, "IBM01047,ibm01047,", 00000, nullptr },// IBM EBCDIC Latin-1/Open System
+	//{ NCP_8BIT | NCP_RECODE, 1141, "x-ebcdic-germany-euro,xebcdicgermanyeuro,", 00000, nullptr },// IBM EBCDIC Germany (20273 + Euro symbol); IBM EBCDIC (Germany-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1142, "x-ebcdic-denmarknorway-euro,xebcdicdenmarknorwayeuro,", 00000, nullptr },// IBM EBCDIC Denmark-Norway (20277 + Euro symbol); IBM EBCDIC (Denmark-Norway-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1143, "x-ebcdic-finlandsweden-euro,xebcdicfinlandswedeneuro,", 00000, nullptr },// IBM EBCDIC Finland-Sweden (20278 + Euro symbol); IBM EBCDIC (Finland-Sweden-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1144, "x-ebcdic-italy-euro,xebcdicitalyeuro,", 00000, nullptr },// IBM EBCDIC Italy (20280 + Euro symbol); IBM EBCDIC (Italy-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1145, "x-ebcdic-spain-euro,xebcdicspaineuro,", 00000, nullptr },// IBM EBCDIC Latin America-Spain (20284 + Euro symbol); IBM EBCDIC (Spain-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1146, "x-ebcdic-uk-euro,xebcdicukeuro,", 00000, nullptr },// IBM EBCDIC United Kingdom (20285 + Euro symbol); IBM EBCDIC (UK-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1147, "x-ebcdic-france-euro,xebcdicfranceeuro,", 00000, nullptr },// IBM EBCDIC France (20297 + Euro symbol); IBM EBCDIC (France-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1148, "x-ebcdic-international-euro,xebcdicinternationaleuro,", 00000, nullptr },// IBM EBCDIC International (500 + Euro symbol); IBM EBCDIC (International-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 1149, "x-ebcdic-icelandic-euro,xebcdicicelandiceuro,", 00000, nullptr },// IBM EBCDIC Icelandic (20871 + Euro symbol); IBM EBCDIC (Icelandic-Euro)
+	//{ NCP_8BIT | NCP_RECODE, 20273, "x-EBCDIC-Germany,xebcdicgermany,", 00000, nullptr },// IBM EBCDIC (Germany)
+	//{ NCP_8BIT | NCP_RECODE, 20277, "x-EBCDIC-DenmarkNorway,xebcdicdenmarknorway,ebcdiccpdk,ebcdiccpno,", 00000, nullptr },// IBM EBCDIC (Denmark-Norway)
+	//{ NCP_8BIT | NCP_RECODE, 20278, "x-EBCDIC-FinlandSweden,xebcdicfinlandsweden,ebcdicpfi,ebcdiccpse,", 00000, nullptr },// IBM EBCDIC (Finland-Sweden)
+	//{ NCP_8BIT | NCP_RECODE, 20280, "x-EBCDIC-Italy,xebcdicitaly,", 00000, nullptr },// IBM EBCDIC (Italy)
+	//{ NCP_8BIT | NCP_RECODE, 20284, "x-EBCDIC-Spain,xebcdicspain,ebcdiccpes,", 00000, nullptr },// IBM EBCDIC (Latin America-Spain)
+	//{ NCP_8BIT | NCP_RECODE, 20285, "x-EBCDIC-UK,xebcdicuk,ebcdiccpgb,", 00000, nullptr },// IBM EBCDIC (United Kingdom)
+	//{ NCP_8BIT | NCP_RECODE, 20290, "x-EBCDIC-JapaneseKatakana,xebcdicjapanesekatakana,", 00000, nullptr },// IBM EBCDIC (Japanese Katakana)
+	//{ NCP_8BIT | NCP_RECODE, 20297, "x-EBCDIC-France,xebcdicfrance,ebcdiccpfr,", 00000, nullptr },// IBM EBCDIC (France)
+	//{ NCP_8BIT | NCP_RECODE, 20420, "x-EBCDIC-Arabic,xebcdicarabic,ebcdiccpar1,", 00000, nullptr },// IBM EBCDIC (Arabic)
+	//{ NCP_8BIT | NCP_RECODE, 20423, "x-EBCDIC-Greek,xebcdicgreek,ebcdiccpgr,", 00000, nullptr },// IBM EBCDIC (Greek)
+	//{ NCP_8BIT | NCP_RECODE, 20424, "x-EBCDIC-Hebrew,xebcdichebrew,ebcdiccphe,", 00000, nullptr },// IBM EBCDIC (Hebrew)
+	//{ NCP_8BIT | NCP_RECODE, 20833, "x-EBCDIC-KoreanExtended,xebcdickoreanextended,", 00000, nullptr },// IBM EBCDIC (Korean Extended)
+	//{ NCP_8BIT | NCP_RECODE, 20838, "x-EBCDIC-Thai,xebcdicthai,ibmthai,csibmthai,", 00000, nullptr },// IBM EBCDIC (Thai)
+	//{ NCP_8BIT | NCP_RECODE, 20871, "x-EBCDIC-Icelandic,xebcdicicelandic,ebcdiccpis,", 00000, nullptr },// IBM EBCDIC (Icelandic)
+	//{ NCP_8BIT | NCP_RECODE, 20880, "x-EBCDIC-CyrillicRussian,xebcdiccyrillicrussian,ebcdiccyrillic,", 00000, nullptr },// IBM EBCDIC (Cyrillic Russian)
+	//{ NCP_8BIT | NCP_RECODE, 20905, "x-EBCDIC-Turkish,xebcdicturkish,ebcdiccptr,", 00000, nullptr },// IBM EBCDIC (Turkish)
+	//{ NCP_8BIT | NCP_RECODE, 20924, "IBM00924,ibm00924,ebcdiclatin9euro,", 00000, nullptr },// IBM EBCDIC Latin-1/Open System (1047 + Euro symbol)
+	//{ NCP_8BIT | NCP_RECODE, 21025, "x-EBCDIC-CyrillicSerbianBulgarian,xebcdiccyrillicserbianbulgarian,", 00000, nullptr },// IBM EBCDIC (Cyrillic Serbian-Bulgarian)
+	//{ NCP_8BIT | NCP_RECODE, 50930, "x-EBCDIC-JapaneseAndKana,xebcdicjapaneseandkana,", 00000, nullptr },// IBM EBCDIC Japanese (Katakana) Extended
+	//{ NCP_8BIT | NCP_RECODE, 50931, "x-EBCDIC-JapaneseAndUSCanada,xebcdicjapaneseanduscanada,", 00000, nullptr },// IBM EBCDIC (US-Canada and Japanese)
+	//{ NCP_8BIT | NCP_RECODE, 50933, "x-EBCDIC-KoreanAndKoreanExtended,xebcdickoreanandkoreanextended,", 00000, nullptr },// IBM EBCDIC (Korean and Korean Extended)
+	//{ NCP_8BIT | NCP_RECODE, 50935, "x-EBCDIC-SimplifiedChinese,xebcdicsimplifiedchinese,", 00000, nullptr },// IBM EBCDIC (Simplified Chinese Extended and Simplified Chinese)
+	//{ NCP_8BIT | NCP_RECODE, 50936, "x-EBCDIC-SimplifiedChinese,xebcdicsimplifiedchinese,", 00000, nullptr },// IBM EBCDIC (Chinese Simplified)
+	//{ NCP_8BIT | NCP_RECODE, 50937, "x-EBCDIC-TraditionalChinese,xebcdictraditionalchinese,", 00000, nullptr },// IBM EBCDIC (US-Canada and Traditional Chinese)
+	//{ NCP_8BIT | NCP_RECODE, 50939, "x-EBCDIC-JapaneseAndJapaneseLatin,xebcdicjapaneseandjapaneselatin,", 00000, nullptr },// IBM EBCDIC (Japanese (Latin) Extended and Japanese)
+	//{ NCP_7BIT | NCP_RECODE, 20105, "x-IA5,xia5,", 00000, nullptr },// IA5 (IRV International Alphabet No. 5, 7-bit); Western European (IA5)
+	//{ NCP_7BIT | NCP_RECODE, 20106, "x-IA5-German,xia5german,", 00000, nullptr },// German (IA5) (7-bit)
+	//{ NCP_7BIT | NCP_RECODE, 20107, "x-IA5-Swedish,xia5swedish,", 00000, nullptr },// Swedish (IA5) (7-bit)
+	//{ NCP_7BIT | NCP_RECODE, 20108, "x-IA5-Norwegian,xia5norwegian,", 00000, nullptr },// Norwegian (IA5) (7-bit)
+	//{ NCP_8BIT | NCP_RECODE, 20936, "X-CP20936,xcp20936,", 00000, nullptr },// Simplified Chinese (GB2312); Chinese Simplified (GB2312-80)
+	//{ NCP_8BIT | NCP_RECODE, 20949, "x-cp20949,xcp20949,", 00000, nullptr },// Korean Wansung
+	{ 52936, NCP_7BIT | NCP_RECODE, IDS_ENCODING_HZ_GB2312, "HZ-GB-2312,hzgb2312,hz," },// HZ-GB2312 Simplified Chinese; Chinese Simplified (HZ)
+	{ 50220, NCP_7BIT | NCP_RECODE, IDS_ENCODING_ISO2022_JP, "ISO-2022-JP,iso2022jp," },// ISO 2022 Japanese with no halfwidth Katakana; Japanese (JIS)
+	{ 50221, NCP_7BIT | NCP_RECODE, IDS_ENCODING_CS_ISO2022_JP, "csISO2022JP,csiso2022jp," },// ISO 2022 Japanese with halfwidth Katakana; Japanese (JIS-Allow 1 byte Kana)
+	{ 50222, NCP_7BIT | NCP_RECODE, IDS_ENCODING_ISO2022_JP_SOSI, "_iso-2022-jp$SIO,iso2022jpsio," },// ISO 2022 Japanese JIS X 0201-1989; Japanese (JIS-Allow 1 byte Kana - SO/SI)
+	{ 50225, NCP_7BIT | NCP_RECODE, IDS_ENCODING_ISO2022_KR, "ISO-2022-KR,iso2022kr,csiso2022kr," },// Korean (ISO-2022-KR)
+	{ 50227, NCP_7BIT | NCP_RECODE, IDS_ENCODING_ISO2022_CNS, "x-cp50227,xcp50227," },// Chinese Simplified (ISO-2022)
+	{ 50229, NCP_7BIT | NCP_RECODE, IDS_ENCODING_ISO2022_CNT, "ISO-2022-CN,iso2022cn," },// Chinese Traditional (ISO-2022)
+	{ 20000, NCP_8BIT | NCP_RECODE, IDS_ENCODING_CNS, "x-Chinese-CNS,xchinesecns," },// Chinese Traditional (CNS);  CNS Taiwan
+	//{ NCP_8BIT | NCP_RECODE, 20001, "x-cp20001,xcp20001,", 00000, nullptr },// TCA Taiwan
+	//{ NCP_8BIT | NCP_RECODE, 20002, "x-Chinese-Eten,xchineseeten,", 00000, nullptr },// Chinese Traditional (Eten); Eten Taiwan
+	//{ NCP_8BIT | NCP_RECODE, 20003, "x-cp20003,xcp20003,", 00000, nullptr },// IBM5550 Taiwan
+	//{ NCP_8BIT | NCP_RECODE, 20004, "x-cp20004,xcp20004,", 00000, nullptr },// TeleText Taiwan
+	//{ NCP_8BIT | NCP_RECODE, 20005, "x-cp20005,xcp20005,", 00000, nullptr },// Wang Taiwan
+	//{ NCP_7BIT | NCP_RECODE, 20127, "us-ascii,usascii,", 00000, nullptr },// US-ASCII (7-bit)
+	//{ NCP_8BIT | NCP_RECODE, 20261, "x-cp20261,xcp20261,", 00000, nullptr },// T.61
+	//{ NCP_8BIT | NCP_RECODE, 20269, "x-cp20269,xcp20269,", 00000, nullptr },// ISO 6937 Non-Spacing Accent
+	/*	20932 used by native API and 51932 used by .NET
+		https://blogs.msdn.microsoft.com/shawnste/2006/07/18/encoding-getencodings-has-a-couple-duplicate-names/
+		https://referencesource.microsoft.com/#mscorlib/system/text/eucjpencoding.cs
+	*/
+	//{ NCP_8BIT | NCP_RECODE, 51932, "euc-jp,eucjp,xeuc,xeucjp,", 0, nullptr },// Japanese (EUC)
+	//{ NCP_8BIT | NCP_RECODE, 51936, "euc-cn,euccn,xeuccn,", 00000, nullptr },// Chinese Simplified (EUC)
+	//{ NCP_8BIT | NCP_RECODE, 51950, "euc,euc,", 00000, nullptr },// Chinese Traditional (EUC)
+	//{ NCP_8BIT | NCP_RECODE, 57002, "x-iscii-de,xisciide,", 00000, nullptr },// ISCII Devanagari
+	//{ NCP_8BIT | NCP_RECODE, 57003, "x-iscii-be,xisciibe,", 00000, nullptr },// ISCII Bangla
+	//{ NCP_8BIT | NCP_RECODE, 57004, "x-iscii-ta,xisciita,", 00000, nullptr },// ISCII Tamil
+	//{ NCP_8BIT | NCP_RECODE, 57005, "x-iscii-te,xisciite,", 00000, nullptr },// ISCII Telugu
+	//{ NCP_8BIT | NCP_RECODE, 57006, "x-iscii-as,xisciias,", 00000, nullptr },// ISCII Assamese
+	//{ NCP_8BIT | NCP_RECODE, 57007, "x-iscii-or,xisciior,", 00000, nullptr },// ISCII Odia
+	//{ NCP_8BIT | NCP_RECODE, 57008, "x-iscii-ka,xisciika,", 00000, nullptr },// ISCII Kannada
+	//{ NCP_8BIT | NCP_RECODE, 57009, "x-iscii-ma,xisciima,", 00000, nullptr },// ISCII Malayalam
+	//{ NCP_8BIT | NCP_RECODE, 57010, "x-iscii-gu,xisciigu,", 00000, nullptr },// ISCII Gujarati
+	//{ NCP_8BIT | NCP_RECODE, 57011, "x-iscii-pa,xisciipa,", 00000, nullptr },// ISCII Panjabi
+};
+
+static NP2EncodingGroup sEncodingGroupList[] = {
+	// ANSI and OEM are root node
+	{ true, IDS_ENCODINGGROUP_UNICODE, { // Unicode
+		CPI_UNICODEBOM,
+		CPI_UNICODEBEBOM,
+		CPI_UNICODE,
+		CPI_UNICODEBE,
+		CPI_UTF8,
+		CPI_UTF8SIGN,
+		CPI_UTF7,
+	}},
+	{ false, IDS_ENCODINGGROUP_WESTERNEURO, { // Western European
+		1252,		// Windows-1252
+		28591,		// Latin-1, ISO 8859-1
+		28605,		// Latin-9, ISO 8859-15
+		28604,		// Celtic Latin-8, ISO 8859-14
+		437,		// OEM United States
+		850,		// OEM Latin-1
+		858,		// OEM Latin-1 + Euro
+		860,		// OEM Portuguese
+		863,		// OEM French Canadian
+		10000, 		// Mac Roman
+	}},
+
+	// dynamic sorted groups
+	{ false, IDS_ENCODINGGROUP_ARABIC, { // Arabic
+		1256,		// Windows-1256
+		28596,		// ISO 8859-6 Visual
+		38596,		// ISO 8859-6-I Logical
+		720,		// ASMO DOS-720
+		864,		// OEM Arabic
+		10004,		// Mac (Arabic)
+	}},
+	{ false, IDS_ENCODINGGROUP_NORTHERNEURO, { // Baltic, Northern European
+		1257,		// Baltic Windows-1257
+		28594,		// Baltic Latin-4, ISO 8859-4
+		28603,		// Estonian Latin-7, ISO 8859-13
+		28600,		// Nordic Latin-6, ISO 8859-10
+		775,		// OEM Baltic
+		861,		// OEM Icelandic
+		865,		// OEM Nordic
+		10079,		// Mac (Icelandic)
+	}},
+	{ false, IDS_ENCODINGGROUP_CENTRALEURO, { // Central and Eastern European
+		1250,		// Windows-1250
+		28592,		// ISO 8859-2
+		852,		// OEM Latin-2
+		10029,		// Mac Latin-2
+	}},
+	{ false, IDS_ENCODINGGROUP_CHINESE, { // Chinese
+		// Simplified Chinese
+		936,		// GBK
+		54936,		// GB18030
+		10008,		// Mac (GB 2312)
+		50227,		// ISO-2022-CN
+		52936,		// HZ-GB2312
+		// Traditional Chinese
+		950,		// Big5
+		20000,		// CNS
+		10002,		// Mac (Big5)
+		50229,		// ISO-2022-CN
+	}},
+	{ false, IDS_ENCODINGGROUP_CYRILLIC, { // Cyrillic
+		1251,		// Windows-1251
+		28595,		// ISO 8859-5
+		20866,		// KOI8-R
+		21866,		// KOI8-U
+		866,		// OEM Russian
+		855,		// OEM Cyrillic
+		10007,		// Mac (Cyrillic)
+		10017,		// Mac (Ukrainian)
+	}},
+	{ false, IDS_ENCODINGGROUP_GREEK, { // Greek
+		1253,		// Windows-1253
+		28597,		// ISO 8859-7
+		737,		// OEM Greek
+		869,		// OEM Modern Greek
+		10006,		// Mac (Greek)
+	}},
+	{ false, IDS_ENCODINGGROUP_HEBREW, { // Hebrew
+		1255,		// Windows-1255
+		28598,		// ISO 8859-8 Visual
+		38598,		// ISO 8859-8-I Logical
+		862,		// OEM Hebrew
+		10005,		// Mac (Hebrew)
+	}},
+	{ false, IDS_ENCODINGGROUP_JAPANESE, { // Japanese
+		932,		// Shift-JIS
+		20932,		// EUC-JP
+		10001,		// Mac (Japanese)
+		50220,		// ISO-2022-JP
+		50221,		// CS ISO-2022-JP
+		50222,		// ISO-2022-JP SI/SO
+	}},
+	{ false, IDS_ENCODINGGROUP_KOREAN, { // Korean
+		949,		// UHC
+		1361,		// Johab
+		51949,		// EUC-KR
+		10003,		// Mac (Korean)
+		50225,		// ISO-2022-KR
+	}},
+	{ false, IDS_ENCODINGGROUP_SOUTHEURO, { // South European
+		// Southern European
+		28593,		// Latin-3, ISO 8859-3
+		10010,		// Mac (Romanian)
+		// Southeast European
+		28606,		// Latin-10, ISO 8859-16
+		10082,		// Mac (Croatian)
+	}},
+	{ false, IDS_ENCODINGGROUP_SOUTHASIA, { // Southeast Asia
+		874,		// Thai TIS-620, ISO 8859-11
+		10021,		// Mac (Thai)
+		1258,		// Vietnamese Windows-1258
+	}},
+	{ false, IDS_ENCODINGGROUP_TURKISH, { // Turkish
+		1254,		// Windows-1254
+		28599,		// Latin-5, ISO 8859-9
+		857,		// OEM Turkish
+		10081,		// Mac (Turkish)
+	}},
+
+	// last group
+	{ false, IDS_ENCODINGGROUP_EBCDIC, { // IBM EBCDIC
+		37,			// US-Canada
+		1140,		// US-Canada + Euro
+		500,		// International
+		870,		// Latin-2
+		875,		// Greek Modern
+		1026,		// Turkish, Latin-5
+	}},
+};
+
+// see buildANSICharClassifyTable() in scintilla/scripts/GenerateCharacterCategory.py
+//++Autogenerated -- start of section automatically generated
+// Created with Python 3.15.0a5, Unicode 17.0.0
+static const uint8_t ANSICharClassifyTable[] = {
+// Central European (Windows-1250)
+0x22, 0xAA, 0xB8, 0xFF, 0xA8, 0xAA, 0xB8, 0xFF, 0xEC, 0xAE, 0xBA, 0xE2, 0xEA, 0xAE, 0xBE, 0xFB,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xBF,
+// Cyrillic (Windows-1251)
+0xEF, 0xAA, 0xBA, 0xFF, 0xAB, 0xAA, 0xB8, 0xFF, 0xFC, 0xAE, 0xBB, 0xE2, 0xFA, 0xAF, 0xBB, 0xFF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+// Western European (Windows-1252)
+0xE2, 0xAA, 0xBB, 0x33, 0xA8, 0xAA, 0xBA, 0xF3, 0xA8, 0xAA, 0xBA, 0xA2, 0xFA, 0xAE, 0xBE, 0xBF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF,
+// Greek (Windows-1253)
+0xE2, 0xAA, 0x88, 0x00, 0xA8, 0xAA, 0x88, 0x00, 0xB8, 0xAA, 0x8A, 0xA2, 0xFA, 0xAE, 0xBF, 0xFF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x3F,
+// Turkish (Windows-1254)
+0xE2, 0xAA, 0xBB, 0x03, 0xA8, 0xAA, 0xBA, 0xC3, 0xA8, 0xAA, 0xBA, 0xA2, 0xFA, 0xAE, 0xBE, 0xBF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF,
+// Hebrew (Windows-1255)
+0xE2, 0xAA, 0x8B, 0x00, 0xA8, 0xAA, 0x8A, 0x00, 0xA8, 0xAA, 0xAA, 0xA2, 0xFA, 0xAE, 0xAE, 0xBF,
+0xFF, 0xFF, 0xFF, 0xEF, 0xBE, 0xBF, 0x02, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x3F, 0x00,
+// Arabic (Windows-1256)
+0xEE, 0xAA, 0xBB, 0xFF, 0xAB, 0xAA, 0xBB, 0xC3, 0xA8, 0xAA, 0xBA, 0xA2, 0xFA, 0xAE, 0xAE, 0xBF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xC3,
+// Baltic (Windows-1257)
+0x22, 0xAA, 0x88, 0xB8, 0xA8, 0xAA, 0x88, 0x28, 0xA0, 0xA2, 0xBB, 0xE2, 0xFA, 0xAE, 0xBF, 0xFF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xBF,
+// Vietnamese (Windows-1258)
+0xE2, 0xAA, 0x8B, 0x03, 0xA8, 0xAA, 0x8A, 0xC3, 0xA8, 0xAA, 0xBA, 0xA2, 0xFA, 0xAE, 0xBE, 0xBF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xEF,
+// Thai (Windows-874)
+0x02, 0x08, 0x00, 0x00, 0xA8, 0xAA, 0x00, 0x00, 0xFC, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x3F, 0x80, 0xFF, 0xFF, 0xFF, 0xBF, 0xFF, 0xFF, 0xAF, 0x00,
+};
+
+static inline const uint8_t* GetANSICharClassifyTable(UINT acp, int *length) noexcept {
+	const UINT diff = acp - 1250;
+	if (diff <= 1258 - 1250) {
+		return ANSICharClassifyTable + diff*32;
+	}
+	if (acp == 874) {
+		return ANSICharClassifyTable + 288;
+	}
+	*length = 0;
+	return nullptr;
+}
+
+const char* GetFoldDisplayEllipsis(UINT cpEdit, UINT acp) noexcept {
+	switch (cpEdit) {
+	case SC_CP_UTF8:
+		return "\xC2\xB7\xC2\xB7\xC2\xB7";
+	case 932: // Shift-JIS
+		return "\xA5\xA5\xA5";
+	case 936: // GBK
+	case 949: // UHC
+		return "\xA1\xA4\xA1\xA4\xA1\xA4";
+	case 950: // Big5
+		return "\xA1\x50\xA1\x50\xA1\x50";
+	case 1361: // Johab
+		return "\xD9\x34\xD9\x34\xD9\x34";
+	}
+	// SBCS
+	cpEdit = acp - 1250;
+	if (cpEdit <= 1258 - 1250) {
+		return "\xB7\xB7\xB7";
+	}
+	return "...";
+}
+//--Autogenerated -- end of section automatically generated
+
+void Encoding_ReleaseResources() noexcept {
+	NP2HeapFree(g_AllEncodingLabel);
+}
+
+static inline bool IsValidEncoding(const NP2ENCODING *encoding) noexcept {
+	return (encoding->uFlags & NCP_INTERNAL) || IsValidCodePage(encoding->uCodePage);
+}
+
+//=============================================================================
+//
+// EditSetNewEncoding()
+//
+bool EditSetNewEncoding(int iEncoding, int iNewEncoding, BOOL bNoUI) noexcept {
+	if (iEncoding != iNewEncoding) {
+		if (iEncoding != CPI_DEFAULT && iNewEncoding != CPI_DEFAULT) {
+			return true;
+		}
+
+		const UINT cpSrc = (mEncoding[iEncoding].uFlags & NCP_DEFAULT) ? iDefaultCodePage : SC_CP_UTF8;
+		const UINT cpDest = (mEncoding[iNewEncoding].uFlags & NCP_DEFAULT) ? iDefaultCodePage : SC_CP_UTF8;
+
+		if (SciCall_GetLength() == 0) {
+			if (bNoUI || SciCall_GetUndoActions() == 0 || InfoBoxWarn(MB_YESNO, L"MsgConv2", IDS_ASK_ENCODING2) == IDYES) {
+				EditConvertText(cpSrc, cpDest);
+				return true;
+			}
+		} else if (bNoUI || InfoBoxWarn(MB_YESNO, L"MsgConv1", IDS_ASK_ENCODING) == IDYES) {
+			BeginWaitCursor();
+			EditConvertText(cpSrc, cpDest);
+			EndWaitCursor();
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void EditOnCodePageChanged(UINT oldCodePage, bool showControlCharacter, EditFindReplace &efr) noexcept {
+	const UINT cpEdit = SciCall_GetCodePage();
+	const UINT acp = GetACP();
+	if (efr.HasFindText()) { // need to convert last find & replace string.
+		efr.status |= FindReplaceStatus_HasFindText | FindReplaceStatus_FindUpdated | FindReplaceStatus_ReplaceUpdated;
+	}
+
+	if (oldCodePage == SC_CP_UTF8) {
+		if (cpEdit == 0) {
+			// UTF-8 to SBCS
+			int length = 32;
+			const uint8_t *buf = GetANSICharClassifyTable(acp, &length);
+			SciCall_SetCharClassesEx(length, buf);
+		} else {
+			// UTF-8 to DBCS
+		}
+	} else {
+		if (showControlCharacter) {
+			EditShowUnicodeControlCharacter(true);
+		}
+		if (oldCodePage == 0) {
+			// SBCS to UTF-8
+			SciCall_SetCharClassesEx(0, nullptr);
+		} else {
+			// DBCS to UTF-8
+		}
+	}
+
+	const char *text = GetFoldDisplayEllipsis(cpEdit, acp);
+	SciCall_SetDefaultFoldDisplayText(text);
+}
+
+//=============================================================================
+//
+// Encoding Helper Functions
+//
+void Encoding_InitDefaults() noexcept {
+	UINT acp = GetACP();
+	if (acp == CP_UTF8) {
+		GetLegacyACP(&acp);
+		wsprintf(wchANSI[CPI_DEFAULT], L" (UTF-8, %u)", acp);
+	} else {
+		wsprintf(wchANSI[CPI_DEFAULT], L" (%u)", acp);
+	}
+
+	mEncoding[CPI_DEFAULT].uCodePage = acp;
+	if (IsDBCSCodePage(acp) || acp == CP_UTF8) {
+		iDefaultCodePage = acp;
+	} else {
+		iDefaultCodePage = CP_ACP;
+	}
+
+	CHARSETINFO ci;
+	if (TranslateCharsetInfo(AsPointer<DWORD *, UINT_PTR>(acp), &ci, TCI_SRCCODEPAGE)) {
+		iDefaultCharSet = ci.ciCharset;
+	} else {
+		iDefaultCharSet = ANSI_CHARSET;
+	}
+
+	UINT oemcp = GetOEMCP();
+	if (oemcp == CP_UTF8) {
+		GetLegacyOEMCP(&oemcp);
+		wsprintf(wchANSI[CPI_OEM], L" (UTF-8, %u)", oemcp);
+	} else {
+		wsprintf(wchANSI[CPI_OEM], L" (%u)", oemcp);
+	}
+
+	mEncoding[CPI_OEM].uCodePage = oemcp;
+	g_DOSEncoding = CPI_OEM;
+	// Try to set the DOS encoding to DOS-437 if the default OEMCP is not DOS-437
+	if (oemcp != 437 && IsValidCodePage(437)) {
+		g_DOSEncoding = Encoding_GetIndex(437);
+	}
+}
+
+int Encoding_MapIniSetting(bool bLoad, UINT iSetting) noexcept {
+	static_assert(CPI_UTF7 == 8);
+	if (iSetting == CPI_UTF7) {
+		return iSetting;
+	}
+	if (iSetting < 8) {
+		constexpr UINT maskLoad = (CPI_DEFAULT << 4*0)
+			| (CPI_UNICODEBOM << 4*1)
+			| (CPI_UNICODEBEBOM << 4*2)
+			| (CPI_UTF8 << 4*3)
+			| (CPI_UTF8SIGN << 4*4)
+			| (CPI_OEM << 4*5)
+			| (CPI_UNICODE << 4*6)
+			| (CPI_UNICODEBE << 4*7);
+		constexpr UINT maskStore = (0 << CPI_DEFAULT*4)
+			| (1 << CPI_UNICODEBOM*4)
+			| (2 << CPI_UNICODEBEBOM*4)
+			| (3 << CPI_UTF8*4)
+			| (4 << CPI_UTF8SIGN*4)
+			| (5 << CPI_OEM*4)
+			| (6 << CPI_UNICODE*4)
+			| (7 << CPI_UNICODEBE*4);
+		const UINT mask = bLoad ? maskLoad : maskStore;
+		return (mask >> (iSetting*4)) & 15;
+	}
+
+	if (bLoad) {
+		if (static_cast<int>(iSetting) < 0) {
+			return CPI_GLOBAL_DEFAULT; // default encoding
+		}
+		if (IsValidCodePage(iSetting)) {
+			iSetting = Encoding_GetIndex(iSetting);
+			return max<int>(iSetting, CPI_FIRST);
+		}
+		return CPI_DEFAULT; // unknown encoding
+	}
+	return mEncoding[iSetting].uCodePage;
+}
+
+LPCWSTR Encoding_GetLabel(UINT iEncoding) noexcept {
+	if (g_AllEncodingLabel == nullptr) {
+		g_AllEncodingLabel = static_cast<LPWSTR>(NP2HeapAlloc(COUNTOF(mEncoding) * MAX_ENCODING_LABEL_SIZE * sizeof(WCHAR)));
+	}
+	LPWSTR wchLabel = g_AllEncodingLabel + iEncoding * MAX_ENCODING_LABEL_SIZE;
+	if (wchLabel[0] == L'\0') {
+		WCHAR wch[256] = L"";
+		GetString(mEncoding[iEncoding].idsName, wch, COUNTOF(wch));
+		LPCWSTR pwsz = StrChr(wch, L';');
+		if (pwsz != nullptr) {
+			++pwsz;
+		}
+		if (StrIsEmpty(pwsz)) {
+			pwsz = wch;
+		}
+		lstrcpyn(wchLabel, pwsz, MAX_ENCODING_LABEL_SIZE);
+	}
+	return wchLabel;
+}
+
+int Encoding_Match(LPCWSTR pwszTest) noexcept {
+	char tchTest[256];
+	WideCharToMultiByte(CP_UTF8, 0, pwszTest, -1, tchTest, COUNTOF(tchTest), nullptr, nullptr);
+	return Encoding_MatchA(tchTest);
+}
+
+int Encoding_MatchA(LPCSTR pchTest) noexcept {
+	char chTest[256];
+	LPCSTR pchSrc = pchTest;
+	char *pchDst = chTest;
+
+	*pchDst++ = ',';
+	char ch;
+	while ((ch = *pchSrc) != '\0') {
+		if (ch >= 'A' && ch <= 'Z') {
+			*pchDst++ = UnsafeLower(ch);
+		} else if (!(ch == '-' || ch == '_')) {
+			// ignore hyphen and underscore
+			*pchDst++ = ch;
+		}
+		pchSrc++;
+	}
+
+	*pchDst++ = ',';
+	*pchDst = '\0';
+
+	for (UINT i = 0; i < COUNTOF(mEncoding); i++) {
+		const NP2ENCODING *encoding = &mEncoding[i];
+		if (strstr(encoding->pszParseNames, chTest)) {
+			if (IsValidEncoding(encoding)) {
+				return i;
+			}
+			break;
+		}
+	}
+
+	return CPI_NONE;
+}
+
+bool Encoding_IsValid(UINT iEncoding) noexcept {
+	return iEncoding < COUNTOF(mEncoding)
+		&& IsValidEncoding(&mEncoding[iEncoding]);
+}
+
+struct ENCODINGENTRY {
+	int id;
+	WCHAR wch[256 - 2];
+};
+
+static int __cdecl CmpEncoding(const void *s1, const void *s2) noexcept {
+	return wcscmp(static_cast<const ENCODINGENTRY *>(s1)->wch, static_cast<const ENCODINGENTRY *>(s2)->wch);
+}
+
+int Encoding_GetIndex(UINT codePage) noexcept {
+	for (UINT i = CPI_UTF8; i < COUNTOF(mEncoding); i++) {
+		if (mEncoding[i].uCodePage == codePage) {
+			return i;
+		}
+	}
+	return CPI_NONE;
+}
+
+int Encoding_GetAnsiIndex() noexcept {
+	int iEncoding = CPI_DEFAULT;
+	const UINT acp = GetACP();
+	if (acp == CP_UTF8) {
+		iEncoding = CPI_UTF8;
+	} else if (bLoadANSIasUTF8 || bLoadASCIIasUTF8) {
+		iEncoding = Encoding_GetIndex(acp);
+	}
+	return iEncoding;
+}
+
+static inline int GetEncodingImageIndex(const NP2ENCODING *encoding) noexcept {
+	return IsValidEncoding(encoding) ? 0 : 1;
+}
+
+void Encoding_AddToTreeView(HWND hwnd, int idSel, bool bRecodeOnly) noexcept {
+	ENCODINGENTRY *pEE = static_cast<ENCODINGENTRY *>(NP2HeapAlloc(COUNTOF(sEncodingGroupList) * sizeof(ENCODINGENTRY)));
+	for (UINT i = 0; i < COUNTOF(sEncodingGroupList); i++) {
+		NP2EncodingGroup *group = &sEncodingGroupList[i];
+		pEE[i].id = i;
+		GetString(group->idsName, pEE[i].wch, COUNTOF(pEE[i].wch));
+		if (!group->bMapped) {
+			// map code page to index
+			for (UINT j = 0; j < COUNTOF(group->encodings); j++) {
+				const UINT page = group->encodings[j];
+				const int index = Encoding_GetIndex(page);
+				group->encodings[j] = index;
+				if (index < CPI_FIRST) {
+					break;
+				}
+			}
+			group->bMapped = true;
+		}
+	}
+
+	// exclude Unicode, Western European and EBCDIC
+	qsort(pEE + 2, COUNTOF(sEncodingGroupList) - 3, sizeof(ENCODINGENTRY), CmpEncoding);
+
+#if 0	// verify sEncodingGroupList
+	{
+		int encodings[COUNTOF(mEncoding)]{};
+		for (UINT i = 0; i < COUNTOF(sEncodingGroupList); i++) {
+			const NP2EncodingGroup *group = &sEncodingGroupList[i];
+			for (UINT j = 0; j < COUNTOF(group->encodings); j++) {
+				const int index = group->encodings[j];
+				if (index >= 0) {
+					encodings[index]++;
+				} else {
+					break;
+				}
+			}
+		}
+		for (UINT i = 0; i < COUNTOF(encodings); i++) {
+			const int count = encodings[i];
+			const UINT page = mEncoding[i].uCodePage;
+			if (count == 0) {
+				DebugPrintf("%s missing code page: %u\n", __func__, page);
+			} else if (count > 1) {
+				DebugPrintf("%s duplicate code page: %u\n", __func__, page);
+			}
+		}
+	}
+#endif
+
+	WCHAR wchBuf[256];
+	TVINSERTSTRUCT tvis;
+	memset(&tvis, 0, sizeof(TVINSERTSTRUCT));
+	tvis.item.mask = TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_PARAM;
+
+	HTREEITEM hParent = TVI_FIRST;
+	HTREEITEM hSelNode = nullptr;
+	HTREEITEM hSelParent = nullptr;
+
+	// ANSI and OEM
+	for (int id = CPI_DEFAULT; id <= CPI_OEM; id++) {
+		const NP2ENCODING *encoding = &mEncoding[id];
+		GetString(encoding->idsName, wchBuf, COUNTOF(wchBuf));
+		LPWSTR pwsz = StrChr(wchBuf, L';');
+		if (pwsz != nullptr) {
+			*pwsz = L'\0';
+		}
+		StrCatBuff(wchBuf, wchANSI[id], COUNTOF(wchBuf));
+
+		tvis.hInsertAfter = hParent;
+		tvis.item.pszText = wchBuf;
+		tvis.item.iImage = GetEncodingImageIndex(encoding);
+		tvis.item.iSelectedImage = tvis.item.iImage;
+		tvis.item.lParam = 1 + id;
+
+		hParent = TreeView_InsertItem(hwnd, &tvis);
+		if (idSel == id) {
+			hSelNode = hParent;
+		}
+	}
+
+	UINT legacyACP = GetACP();
+	if (legacyACP == CP_UTF8) {
+		legacyACP = mEncoding[CPI_DEFAULT].uCodePage;
+	}
+	for (UINT i = 0; i < COUNTOF(sEncodingGroupList); i++) {
+		const NP2EncodingGroup *group = &sEncodingGroupList[pEE[i].id];
+		tvis.hParent = nullptr;
+		tvis.hInsertAfter = hParent;
+		tvis.item.pszText = pEE[i].wch;
+		tvis.item.iImage = 2; // folder
+		tvis.item.iSelectedImage = 2;
+		tvis.item.lParam = 0; // group
+
+		hParent = TreeView_InsertItem(hwnd, &tvis);
+		tvis.hParent = hParent;
+
+		HTREEITEM hTreeNode = TVI_FIRST;
+		bool expand = i < 2; // Unicode, Western European
+
+		for (UINT j = 0; j < COUNTOF(group->encodings); j++) {
+			const int id = group->encodings[j];
+			if (id <= 0) {
+				break;
+			}
+			const NP2ENCODING *encoding = &mEncoding[id];
+			if (!bRecodeOnly || (encoding->uFlags & NCP_RECODE)) {
+				GetString(encoding->idsName, wchBuf, COUNTOF(wchBuf));
+				LPWSTR pwsz = StrChr(wchBuf, L';');
+				if (pwsz != nullptr) {
+					*pwsz = L'\0';
+				}
+
+				tvis.hInsertAfter = hTreeNode;
+				tvis.item.pszText = wchBuf;
+				tvis.item.iImage = GetEncodingImageIndex(encoding);
+				tvis.item.iSelectedImage = tvis.item.iImage;
+				tvis.item.lParam = 1 + id;
+
+				hTreeNode = TreeView_InsertItem(hwnd, &tvis);
+				if (idSel == id) {
+					hSelNode = hTreeNode;
+					hSelParent = hParent;
+					expand = true;
+				} else if (!expand && (id == iDefaultCodePage || id == iCurrentEncoding
+					|| legacyACP == encoding->uCodePage)) {
+					// group contains default code, current code page, ANSI code page.
+					expand = true;
+				}
+			}
+		}
+		if (expand) {
+			TreeView_Expand(hwnd, hParent, TVE_EXPAND);
+		}
+	}
+
+	if (hSelParent != nullptr) {
+		TreeView_EnsureVisible(hwnd, hSelParent);
+	}
+	TreeView_Select(hwnd, hSelNode, TVGN_CARET);
+	NP2HeapFree(pEE);
+}
+
+bool Encoding_GetFromTreeView(HWND hwnd, int *pidEncoding, bool bQuiet) noexcept {
+	HTREEITEM hTreeNode = TreeView_GetSelection(hwnd);
+	if (hTreeNode != nullptr) {
+		TVITEM item;
+		memset(&item, 0, sizeof(item));
+		item.mask = TVIF_PARAM;
+		item.hItem = hTreeNode;
+		TreeView_GetItem(hwnd, &item);
+		if (item.lParam > 0) {
+			const int id = static_cast<int>(item.lParam - 1);
+			if (Encoding_IsValid(id)) {
+				*pidEncoding = id;
+				return true;
+			}
+			if (!bQuiet) {
+				MsgBoxWarn(MB_OK, IDS_ERR_ENCODINGNA);
+			}
+		}
+	}
+	return false;
+}
+
+#if 0
+void Encoding_AddToListView(HWND hwnd, int idSel, bool bRecodeOnly) noexcept {
+	ENCODINGENTRY *pEE = static_cast<ENCODINGENTRY *>(NP2HeapAlloc(COUNTOF(sEncodingGroupList) * sizeof(ENCODINGENTRY)));
+	for (UINT i = 0; i < COUNTOF(mEncoding); i++) {
+		pEE[i].id = i;
+		GetString(mEncoding[i].idsName, pEE[i].wch, COUNTOF(pEE[i].wch));
+	}
+	qsort(pEE, COUNTOF(mEncoding), sizeof(ENCODINGENTRY), CmpEncoding);
+
+	WCHAR wchBuf[256];
+	LVITEM lvi;
+	memset(&lvi, 0, sizeof(LVITEM));
+	lvi.mask = LVIF_PARAM | LVIF_TEXT | LVIF_IMAGE;
+	lvi.pszText = wchBuf;
+
+	int iSelItem = -1;
+	for (UINT i = 0; i < COUNTOF(mEncoding); i++) {
+		const int id = pEE[i].id;
+		const NP2ENCODING *encoding = &mEncoding[id];
+		if (!bRecodeOnly || (encoding->uFlags & NCP_RECODE)) {
+			lvi.iItem = ListView_GetItemCount(hwnd);
+			LPWSTR pwsz = StrChr(pEE[i].wch, L';');
+			if (pwsz != nullptr) {
+				lstrcpyn(wchBuf, pwsz + 1, COUNTOF(wchBuf));
+				pwsz = StrChr(wchBuf, L';');
+				if (pwsz != nullptr) {
+					*pwsz = L'\0';
+				}
+			} else {
+				lstrcpyn(wchBuf, pEE[i].wch, COUNTOF(wchBuf));
+			}
+
+			if (id <= CPI_OEM) {
+				StrCatBuff(wchBuf, wchANSI[id], COUNTOF(wchBuf));
+			}
+
+			lvi.iImage = GetEncodingImageIndex(encoding);
+			lvi.lParam = AsInteger<LPARAM>(id);
+			ListView_InsertItem(hwnd, &lvi);
+
+			if (idSel == id) {
+				iSelItem = lvi.iItem;
+			}
+		}
+	}
+
+	NP2HeapFree(pEE);
+
+	if (iSelItem >= 0) {
+		ListView_SetItemState(hwnd, iSelItem, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+		ListView_EnsureVisible(hwnd, iSelItem, FALSE);
+	} else {
+		ListView_SetItemState(hwnd, 0, LVIS_FOCUSED, LVIS_FOCUSED);
+		ListView_EnsureVisible(hwnd, 0, FALSE);
+	}
+}
+
+bool Encoding_GetFromListView(HWND hwnd, int *pidEncoding) noexcept {
+	LVITEM lvi;
+
+	lvi.iItem = ListView_GetNextItem(hwnd, -1, LVNI_ALL | LVNI_SELECTED);
+	lvi.iSubItem = 0;
+	lvi.mask = LVIF_PARAM;
+
+	if (ListView_GetItem(hwnd, &lvi)) {
+		if (Encoding_IsValid(static_cast<int>(lvi.lParam))) {
+			*pidEncoding = static_cast<int>(lvi.lParam);
+			return true;
+		}
+		MsgBoxWarn(MB_OK, IDS_ERR_ENCODINGNA);
+	}
+
+	return false;
+}
+
+void Encoding_AddToComboboxEx(HWND hwnd, int idSel, bool bRecodeOnly) noexcept {
+	ENCODINGENTRY *pEE = static_cast<ENCODINGENTRY *>(NP2HeapAlloc(COUNTOF(sEncodingGroupList) * sizeof(ENCODINGENTRY)));
+	for (UINT i = 0; i < COUNTOF(mEncoding); i++) {
+		pEE[i].id = i;
+		GetString(mEncoding[i].idsName, pEE[i].wch, COUNTOF(pEE[i].wch));
+	}
+	qsort(pEE, COUNTOF(mEncoding), sizeof(ENCODINGENTRY), CmpEncoding);
+
+	WCHAR wchBuf[256];
+	COMBOBOXEXITEM cbei;
+	memset(&cbei, 0, sizeof(COMBOBOXEXITEM));
+
+	cbei.mask = CBEIF_TEXT | CBEIF_IMAGE | CBEIF_SELECTEDIMAGE | CBEIF_LPARAM;
+	cbei.pszText = wchBuf;
+	cbei.cchTextMax = COUNTOF(wchBuf);
+	cbei.iImage = 0;
+	cbei.iSelectedImage = 0;
+
+	int iSelItem = -1;
+	for (UINT i = 0; i < COUNTOF(mEncoding); i++) {
+		const int id = pEE[i].id;
+		const NP2ENCODING *encoding = &mEncoding[id];
+		if (!bRecodeOnly || (encoding->uFlags & NCP_RECODE)) {
+			cbei.iItem = ComboBox_GetCount(hwnd);
+			LPWSTR pwsz = StrChr(pEE[i].wch, L';');
+			if (pwsz != nullptr) {
+				lstrcpyn(wchBuf, pwsz + 1, COUNTOF(wchBuf));
+				pwsz = StrChr(wchBuf, L';');
+				if (pwsz != nullptr) {
+					*pwsz = L'\0';
+				}
+			} else {
+				lstrcpyn(wchBuf, pEE[i].wch, COUNTOF(wchBuf));
+			}
+
+			if (id <= CPI_OEM) {
+				StrCatBuff(wchBuf, wchANSI[id], COUNTOF(wchBuf));
+			}
+
+			cbei.iImage = GetEncodingImageIndex(encoding);
+			cbei.lParam = AsInteger<LPARAM>(id);
+			SendMessage(hwnd, CBEM_INSERTITEM, 0, AsInteger<LPARAM>(&cbei));
+
+			if (idSel == id) {
+				iSelItem = static_cast<int>(cbei.iItem);
+			}
+		}
+	}
+
+	NP2HeapFree(pEE);
+
+	if (iSelItem >= 0) {
+		ComboBox_SetCurSel(hwnd, iSelItem);
+	}
+}
+
+bool Encoding_GetFromComboboxEx(HWND hwnd, int *pidEncoding) noexcept {
+	COMBOBOXEXITEM cbei;
+
+	cbei.iItem = ComboBox_GetCurSel(hwnd);
+	cbei.mask = CBEIF_LPARAM;
+
+	if (SendMessage(hwnd, CBEM_GETITEM, 0, AsInteger<LPARAM>(&cbei))) {
+		if (Encoding_IsValid(static_cast<int>(cbei.lParam))) {
+			*pidEncoding = static_cast<int>(cbei.lParam);
+			return true;
+		}
+		MsgBoxWarn(MB_OK, IDS_ERR_ENCODINGNA);
+	}
+
+	return false;
+}
+#endif
+
+//=============================================================================
+//
+// CodePageFromCharSet()
+//
+UINT CodePageFromCharSet(UINT uCharSet) noexcept {
+	CHARSETINFO ci;
+	if (TranslateCharsetInfo(AsPointer<DWORD *, UINT_PTR>(uCharSet), &ci, TCI_SRCCHARSET)) {
+		return ci.ciACP;
+	}
+	return GetACP();
+}
+
+
+static constexpr bool IsC0ControlChar(uint8_t ch) noexcept {
+#if 1
+	return ch < 32 && (static_cast<uint8_t>(ch - 0x09)) > (0x0d - 0x09);
+#else
+	// exclude whitespace and separator
+	return ch < 0x1c && (static_cast<uint8_t>(ch - 0x09)) > (0x0d - 0x09);
+#endif
+}
+
+bool MaybeBinaryFile(const uint8_t *ptr, DWORD length, int *encodingFlag) noexcept {
+	/* Test C0 Control Character
+	These characters are not reused in most text encodings, and do not appear in normal text files.
+	Most binary files have reserved fields (mostly zeros) or small values in the header.
+	Treat the file as binary when we find two adjacent C0 control characters
+	(very common in file header) or some (currently set to 8) C0 control characters. */
+
+	length = min<DWORD>(length, 1024);
+	const uint8_t * const end = ptr + length;
+	UINT count = 0;
+	UINT mask = 0; // find two different C0 control characters
+	int result = 0;
+	while (ptr < end) {
+		const uint8_t ch = *ptr++;
+		if (IsC0ControlChar(ch)) {
+			++count;
+			mask |= 1U << ch;
+			if ((mask & (mask - 1)) != 0) {
+				result |= 2;
+			}
+			if ((count >= 8) || IsC0ControlChar(*ptr)) {
+				result |= 1;
+			}
+			if (result == 3) {
+				*encodingFlag = EncodingFlag_Binary;
+				break;
+			}
+		}
+	}
+	return result & true;
+}
+
+static inline BOOL IsValidMultiByte(UINT codePage, const char *lpData, DWORD cbData) noexcept {
+	return MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, lpData, cbData, nullptr, 0);
+}
+
+#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
+static inline BOOL IsValidWideChar(LPCWSTR lpWide, DWORD cchWide) noexcept {
+	return WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, lpWide, cchWide, nullptr, 0, nullptr, nullptr);
+}
+#endif
+
+static int DetectUnicode(char *pTest, DWORD nLength, bool ascii) noexcept {
+	if (ascii) {
+		// find ASCII inside first or last 4 KiB text
+		constexpr DWORD size = 4096;
+		if (NP2_memchr(pTest, 0, min(nLength, size)) == nullptr
+			&& (nLength <= size || NP2_memchr(pTest + (nLength - size), 0, size) == nullptr)) {
+			return CPI_DEFAULT;
+		}
+	}
+
+	int i = 0xFFFF;
+	IsTextUnicode(pTest, nLength, &i);
+#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
+	if (i != 0xFFFF && (i & IS_TEXT_UNICODE_ILLEGAL_CHARS) == 0) {
+		if (i & IS_TEXT_UNICODE_UNICODE_MASK) {
+			if (IsValidWideChar(reinterpret_cast<LPCWSTR>(pTest), nLength/2)) {
+				return CPI_UNICODE;
+			}
+		}
+		if (i & IS_TEXT_UNICODE_REVERSE_MASK) {
+			_swab(pTest, pTest, nLength);
+			if (IsValidWideChar(reinterpret_cast<LPCWSTR>(pTest), nLength/2)) {
+				return CPI_UNICODEBE;
+			}
+			_swab(pTest, pTest, nLength);
+		}
+	}
+
+#else
+	if (i != 0xFFFF && (i & IS_TEXT_UNICODE_ILLEGAL_CHARS) == 0) {
+		UINT mask = ascii ? (IS_TEXT_UNICODE_UNICODE_MASK & ~IS_TEXT_UNICODE_STATISTICS) : IS_TEXT_UNICODE_UNICODE_MASK;
+		if (i & mask) {
+			return CPI_UNICODE;
+		}
+		mask = ascii ? (IS_TEXT_UNICODE_REVERSE_MASK & ~IS_TEXT_UNICODE_REVERSE_STATISTICS) : IS_TEXT_UNICODE_REVERSE_MASK;
+		if (i & mask) {
+			return CPI_UNICODEBE;
+		}
+	}
+#endif
+	return CPI_DEFAULT;
+}
+
+#if 0
+static int DetectUTF16Latin1(const char *pTest, DWORD nLength) noexcept {
+	const char *pt = pTest;
+	const char * const end = pt + nLength;
+
+#if NP2_USE_AVX512
+	const uint64_t high = UINT64_MAX << (nLength & (sizeof(__m512i) - 1));
+	__m512i test = _mm512_set1_epi16(-0x0100); // 0xFF00
+	uint64_t expected = 0xAAAAAAAA'AAAAAAAAULL;
+	do {
+		const __m512i chunk = _mm512_loadu_si512(pt);
+		pt += sizeof(__m512i);
+		uint64_t mask = _mm512_testn_epi8_mask(chunk, test);
+		if (andn_u64(mask, expected) != 0) {
+			if (pt > end) {
+				mask |= high;
+				if (andn_u64(mask, expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 1;
+				if (andn_u64(mask, expected) == 0) {
+					pt = pTest;
+					test = _mm512_bsrli_epi128(test, 1);
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end NP2_USE_AVX512
+#elif NP2_USE_AVX2
+	nLength &= sizeof(__m256i) - 1;
+	nLength = UINT32_MAX << nLength;
+#if !NP2_USE_AVX512
+	const __m256i zero = _mm256_setzero_si256();
+#endif
+	__m256i test = _mm256_set1_epi16(-0x0100); // 0xFF00
+	uint32_t expected = 0xAAAAAAAA;
+	do {
+		const __m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt));
+		pt += sizeof(__m256i);
+		if (_mm256_testz_si256(chunk, test) == 0)
+		//if (andn_u32(mask, expected) != 0)
+		{
+#if NP2_USE_AVX512
+			uint32_t mask = _mm256_testn_epi8_mask(chunk, chunk);
+#else
+			uint32_t mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(chunk, zero));
+#endif
+			if (pt > end) {
+				mask |= nLength;
+				if (andn_u32(mask, expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 1;
+				if (andn_u32(mask, expected) == 0) {
+					pt = pTest;
+					test = _mm256_srli_si256(test, 1);
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end NP2_USE_AVX2
+#elif NP2_USE_SSE2
+	uint32_t padding = nLength & (sizeof(__m128i) - 1);
+	const uint32_t high = UINT32_MAX << padding;
+	const uint32_t lower = ~high; // (1 << padding) - 1
+	padding = padding ? high : 0;
+	nLength &= 2*sizeof(__m128i) - 1;
+	const __m128i zero = _mm_setzero_si128();
+	uint32_t expected = 0xAAAA;
+	do {
+		const __m128i chunk1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt));
+		const __m128i chunk2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt + sizeof(__m128i)));
+		pt += 2*sizeof(__m128i);
+		uint32_t mask = ~_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_or_si128(chunk1, chunk2), zero));
+		if ((mask & expected) != 0) {
+			if (pt > end) {
+				mask = _mm_movemask_epi8(_mm_cmpeq_epi8(chunk1, zero));
+				uint32_t last = padding;
+				if (nLength > sizeof(__m128i)) {
+					last = _mm_movemask_epi8(_mm_cmpeq_epi8(chunk2, zero));
+					last &= lower;
+				}
+				mask |= last;
+				mask = ~mask;
+				if ((mask & expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 1;
+				if ((mask & expected) == 0) {
+					pt = pTest;
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end NP2_USE_SSE2
+#elif defined(_WIN64)
+	nLength &= sizeof(uint64_t) - 1;
+	nLength = (sizeof(uint64_t) - nLength)*8;
+	uint64_t expected = UINT64_C(0xFF00FF00FF00FF00);
+	do {
+		uint64_t value = *(reinterpret_cast<const uint64_t *>(pt));
+		pt += sizeof(uint64_t);
+		if ((value & expected) != 0) {
+			if (pt > end) {
+				value <<= nLength;
+				if ((value & expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 8;
+				if ((value & expected) == 0) {
+					pt = pTest;
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end _WIN64
+#else
+	nLength &= sizeof(uint32_t) - 1;
+	nLength = (sizeof(uint32_t) - nLength)*8;
+	uint32_t expected = 0xFF00FF00U;
+	do {
+		uint32_t value = *(reinterpret_cast<const uint32_t *>(pt));
+		pt += sizeof(uint32_t);
+		if ((value & expected) != 0) {
+			if (pt > end) {
+				value <<= nLength;
+				if ((value & expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 8;
+				if ((value & expected) == 0) {
+					pt = pTest;
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end _WIN32
+#endif
+
+	return CPI_UNICODE + (expected & 1);
+}
+#endif
+
+static int DetectUTF16LatinExt(const char *pTest, DWORD nLength) noexcept {
+	const char *pt = pTest;
+	const char * const end = pt + nLength;
+
+#if NP2_USE_AVX512
+	const uint64_t high = UINT64_MAX << (nLength & (sizeof(__m512i) - 1));
+	__m512i test = _mm512_set1_epi16(-0x0800); // 0xF800
+	uint64_t expected = 0xAAAAAAAA'AAAAAAAAULL;
+	do {
+		const __m512i chunk = _mm512_loadu_si512(pt);
+		pt += sizeof(__m512i);
+		uint64_t mask = _mm512_testn_epi8_mask(chunk, test);
+		if (andn_u64(mask, expected) != 0) {
+			if (pt > end) {
+				mask |= high;
+				if (andn_u64(mask, expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 1;
+				if (andn_u64(mask, expected) == 0) {
+					pt = pTest;
+					test = _mm512_bsrli_epi128(test, 1);
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end NP2_USE_AVX512
+#elif NP2_USE_AVX2
+	nLength &= sizeof(__m256i) - 1;
+	nLength = UINT32_MAX << nLength;
+#if !NP2_USE_AVX512
+	const __m256i zero = _mm256_setzero_si256();
+#endif
+	__m256i test = _mm256_set1_epi16(-0x0800); // 0xF800
+	uint32_t expected = 0xAAAAAAAA;
+	do {
+		const __m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt));
+		pt += sizeof(__m256i);
+		if (_mm256_testz_si256(chunk, test) == 0)
+		//if (andn_u32(mask, expected) != 0)
+		{
+#if NP2_USE_AVX512
+			uint32_t mask = _mm256_testn_epi8_mask(chunk, test);
+#else
+			uint32_t mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_and_si256(chunk, test), zero));
+#endif
+			if (pt > end) {
+				mask |= nLength;
+				if (andn_u32(mask, expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 1;
+				if (andn_u32(mask, expected) == 0) {
+					pt = pTest;
+					test = _mm256_srli_si256(test, 1);
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end NP2_USE_AVX2
+#elif NP2_USE_SSE2
+	uint32_t padding = nLength & (sizeof(__m128i) - 1);
+	const uint32_t high = UINT32_MAX << padding;
+	const uint32_t lower = ~high; // (1 << padding) - 1
+	padding = padding ? high : 0;
+	nLength &= 2*sizeof(__m128i) - 1;
+	__m128i test = _mm_set1_epi16(-0x0800); // 0xF800
+	const __m128i zero = _mm_setzero_si128();
+	uint32_t expected = 0xAAAA;
+	do {
+		const __m128i chunk1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt));
+		const __m128i chunk2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt + sizeof(__m128i)));
+		pt += 2*sizeof(__m128i);
+		uint32_t mask = ~_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(_mm_or_si128(chunk1, chunk2), test), zero));
+		if ((mask & expected) != 0) {
+			if (pt > end) {
+				mask = _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(chunk1, test), zero));
+				uint32_t last = padding;
+				if (nLength > sizeof(__m128i)) {
+					last = _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(chunk2, test), zero));
+					last &= lower;
+				}
+				mask |= last;
+				mask = ~mask;
+				if ((mask & expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 1) == 0) {
+				expected >>= 1;
+				if ((mask & expected) == 0) {
+					pt = pTest;
+					test = _mm_srli_si128(test, 1);
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	// end NP2_USE_SSE2
+#elif defined(_WIN64)
+	nLength &= sizeof(uint64_t) - 1;
+	nLength = (sizeof(uint64_t) - nLength)*8;
+	uint64_t expected = UINT64_C(0xF800F800F800F800);
+	do {
+		uint64_t value = *(reinterpret_cast<const uint64_t *>(pt));
+		pt += sizeof(uint64_t);
+		if ((value & expected) != 0) {
+			if (pt > end) {
+				value <<= nLength;
+				if ((value & expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 8) == 0) {
+				expected >>= 8;
+				if ((value & expected) == 0) {
+					pt = pTest;
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	expected >>= 3;
+	// end _WIN64
+#else
+	nLength &= sizeof(uint32_t) - 1;
+	nLength = (sizeof(uint32_t) - nLength)*8;
+	uint32_t expected = 0xF800F800U;
+	do {
+		uint32_t value = *(reinterpret_cast<const uint32_t *>(pt));
+		pt += sizeof(uint32_t);
+		if ((value & expected) != 0) {
+			if (pt > end) {
+				value <<= nLength;
+				if ((value & expected) == 0) {
+					break;
+				}
+			}
+			if ((expected & 8) == 0) {
+				expected >>= 8;
+				if ((value & expected) == 0) {
+					pt = pTest;
+					continue;
+				}
+			}
+			return CPI_DEFAULT;
+		}
+	} while (pt < end);
+	expected >>= 3;
+	// end _WIN32
+#endif
+
+	return CPI_UNICODE + (expected & 1);
+}
+
+#if 0
+bool IsUTF8(const char *pTest, DWORD nLength) noexcept {
+	static const uint8_t byte_class_table[256] = {
+		/* 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F */
+		/* 00 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 10 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 20 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 30 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 40 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 50 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 60 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 70 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		/* 80 */ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+		/* 90 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+		/* A0 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+		/* B0 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+		/* C0 */ 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+		/* D0 */ 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+		/* E0 */ 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 7, 7,
+		/* F0 */ 9, 10, 10, 10, 11, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4
+		/* 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F*/
+	};
+
+	/* state table */
+	enum utf8_state{
+		kSTART = 0, kA, kB, kC, kD, kE, kF, kG, kERROR, kNumOfStates
+	};
+
+	static const uint8_t state_table[] = {
+		/*							   kSTART, kA,     kB,     kC,     kD,     kE,     kF,     kG,     kERROR */
+		/* 0x00-0x7F: 0				*/ kSTART, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0x80-0x8F: 1				*/ kERROR, kSTART, kA,     kERROR, kA,     kB,     kERROR, kB,     kERROR,
+		/* 0x90-0x9f: 2				*/ kERROR, kSTART, kA,     kERROR, kA,     kB,     kB,     kERROR, kERROR,
+		/* 0xa0-0xbf: 3				*/ kERROR, kSTART, kA,     kA,     kERROR, kB,     kB,     kERROR, kERROR,
+		/* 0xc0-0xc1, 0xf5-0xff: 4  */ kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xc2-0xdf: 5				*/ kA,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xe0: 6					*/ kC,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xe1-0xec, 0xee-0xef: 7  */ kB,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xed: 8					*/ kD,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xf0: 9					*/ kF,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xf1-0xf3: 10			*/ kE,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR,
+		/* 0xf4: 11					*/ kG,     kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR, kERROR
+	};
+
+#define BYTE_CLASS(b) (byte_class_table[b])
+#define NEXT_STATE(b, cur) (state_table[(BYTE_CLASS(b) * kNumOfStates) + (cur)])
+
+	utf8_state current = kSTART;
+
+	const uint8_t *pt = reinterpret_cast<const uint8_t *>(pTest);
+	const uint8_t * const end = pt + nLength;
+
+	while (pt < end) {
+		current = NEXT_STATE(*pt, current);
+		if (kERROR == current) {
+			break;
+		}
+		++pt;
+	}
+
+	return current == kSTART;
+}
+#endif
+
+// https://github.com/zwegner/faster-utf8-validator
+// faster-utf8-validator
+// Copyright (c) 2019 Zach Wegner
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+// How this validator works:
+//
+//   [[[ UTF-8 refresher: UTF-8 encodes text in sequences of "code points",
+//   each one from 1-4 bytes. For each code point that is longer than one byte,
+//   the code point begins with a unique prefix that specifies how many bytes
+//   follow. All bytes in the code point after this first have a continuation
+//   marker. All code points in UTF-8 will thus look like one of the following
+//   binary sequences, with x meaning "don't care":
+//      1 byte:  0xxxxxxx
+//      2 bytes: 110xxxxx  10xxxxxx
+//      3 bytes: 1110xxxx  10xxxxxx  10xxxxxx
+//      4 bytes: 11110xxx  10xxxxxx  10xxxxxx  10xxxxxx
+//   ]]]
+//
+// This validator works in two basic steps: checking continuation bytes, and
+// handling special cases. Each step works on one vector's worth of input
+// bytes at a time.
+//
+// The continuation bytes are handled in a fairly straightforward manner in
+// the scalar domain. A mask is created from the input byte vector for each
+// of the highest four bits of every byte. The first mask allows us to quickly
+// skip pure ASCII input vectors, which have no bits set. The first and
+// (inverted) second masks together give us every continuation byte (10xxxxxx).
+// The other masks are used to find prefixes of multi-byte code points (110,
+// 1110, 11110). For these, we keep a "required continuation" mask, by shifting
+// these masks 1, 2, and 3 bits respectively forward in the byte stream. That
+// is, we take a mask of all bytes that start with 11, and shift it left one
+// bit forward to get the mask of all the first continuation bytes, then do the
+// same for the second and third continuation bytes. Here's an example input
+// sequence along with the corresponding masks:
+//
+//   bytes:        61 C3 80 62 E0 A0 80 63 F0 90 80 80 00
+//   code points:  61|C3 80|62|E0 A0 80|63|F0 90 80 80|00
+//   # of bytes:   1 |2  - |1 |3  -  - |1 |4  -  -  - |1
+//   cont. mask 1: -  -  1  -  -  1  -  -  -  1  -  -  -
+//   cont. mask 2: -  -  -  -  -  -  1  -  -  -  1  -  -
+//   cont. mask 3: -  -  -  -  -  -  -  -  -  -  -  1  -
+//   cont. mask *: 0  0  1  0  0  1  1  0  0  1  1  1  0
+//
+// The final required continuation mask is then compared with the mask of
+// actual continuation bytes, and must match exactly in valid UTF-8. The only
+// complication in this step is that the shifted masks can cross vector
+// boundaries, so we need to keep a "carry" mask of the bits that were shifted
+// past the boundary in the last loop iteration.
+//
+// Besides the basic prefix coding of UTF-8, there are several invalid byte
+// sequences that need special handling. These are due to three factors:
+// code points that could be described in fewer bytes, code points that are
+// part of a surrogate pair (which are only valid in UTF-16), and code points
+// that are past the highest valid code point U+10FFFF.
+//
+// All of the invalid sequences can be detected by independently observing
+// the first three nibbles of each code point. Since AVX2 can do a 4-bit/16-byte
+// lookup in parallel for all 32 bytes in a vector, we can create bit masks
+// for all of these error conditions, look up the bit masks for the three
+// nibbles for all input bytes, and AND them together to get a final error mask,
+// that must be all zero for valid UTF-8. This is somewhat complicated by
+// needing to shift the error masks from the first and second nibbles forward in
+// the byte stream to line up with the third nibble.
+//
+// We have these possible values for valid UTF-8 sequences, broken down
+// by the first three nibbles:
+//
+//   1st   2nd   3rd   comment
+//   0..7  0..F        ASCII
+//   8..B  0..F        continuation bytes
+//   C     2..F  8..B  C0 xx and C1 xx can be encoded in 1 byte
+//   D     0..F  8..B  D0..DF are valid with a continuation byte
+//   E     0     A..B  E0 8x and E0 9x can be encoded with 2 bytes
+//         1..C  8..B  E1..EC are valid with continuation bytes
+//         D     8..9  ED Ax and ED Bx correspond to surrogate pairs
+//         E..F  8..B  EE..EF are valid with continuation bytes
+//   F     0     9..B  F0 8x can be encoded with 3 bytes
+//         1..3  8..B  F1..F3 are valid with continuation bytes
+//         4     8     F4 8F BF BF is the maximum valid code point
+//
+// That leaves us with these invalid sequences, which would otherwise fit
+// into UTF-8's prefix encoding. Each of these invalid sequences needs to
+// be detected separately, with their own bits in the error mask.
+//
+//   1st   2nd   3rd   error bit
+//   C     0..1  0..F  0x01
+//   E     0     8..9  0x02
+//         D     A..B  0x04
+//   F     0     0..8  0x08
+//         4     9..F  0x10
+//         5..F  0..F  0x20
+//
+// For every possible value of the first, second, and third nibbles, we keep
+// a lookup table that contains the bitwise OR of all errors that that nibble
+// value can cause. For example, the first nibble has zeroes in every entry
+// except for C, E, and F, and the third nibble lookup has the 0x21 bits in
+// every entry, since those errors don't depend on the third nibble. After
+// doing a parallel lookup of the first/second/third nibble values for all
+// bytes, we AND them together. Only when all three have an error bit in common
+// do we fail validation.
+
+// clang -E -Xclang -fkeep-system-includes -DSSE4 z_validate.c > z_validate_sse4.c
+// clang -E -Xclang -fkeep-system-includes -DAVX2 z_validate.c > z_validate_avx2.c
+// clang -E -Xclang -fkeep-system-includes -DAVX512_VBMI z_validate.c > z_validate_avx512.c
+
+#if NP2_USE_AVX2
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__always_inline__)) static inline
+#else
+static __forceinline
+#endif
+bool z_validate_vec_avx2(__m256i bytes, __m256i shifted_bytes, uint32_t *last_cont) noexcept {
+	// Error lookup tables for the first, second, and third nibbles
+	// Simple macro to make a vector lookup table for use with vpshufb. Since
+	// AVX2 is two 16-byte halves, we duplicate the input values.
+#define V_TABLE_16(...)		_mm256_setr_epi8(__VA_ARGS__, __VA_ARGS__)
+	const __m256i error_1 = V_TABLE_16(
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x01, 0x00, 0x06, 0x38
+	);
+	const __m256i error_2 = V_TABLE_16(
+		0x0B, 0x01, 0x00, 0x00,
+		0x10, 0x20, 0x20, 0x20,
+		0x20, 0x20, 0x20, 0x20,
+		0x20, 0x24, 0x20, 0x20
+	);
+	const __m256i error_3 = V_TABLE_16(
+		0x29, 0x29, 0x29, 0x29,
+		0x29, 0x29, 0x29, 0x29,
+		0x2B, 0x33, 0x35, 0x35,
+		0x31, 0x31, 0x31, 0x31
+	);
+#undef V_TABLE_16
+
+	// Quick skip for ascii-only input. If there are no bytes with the high bit
+	// set, we don't need to do any more work. We return either valid or
+	// invalid based on whether we expected any continuation bytes here.
+	const uint32_t high = _mm256_movemask_epi8(bytes);
+	if (!high) {
+		return *last_cont == 0;
+	}
+
+	// Which bytes are required to be continuation bytes
+	uint64_t req = *last_cont;
+
+	// Compute the continuation byte mask by finding bytes that start with
+	// 11x, 111x, and 1111. For each of these prefixes, we get a bitmask
+	// and shift it forward by 1, 2, or 3. This loop should be unrolled by
+	// the compiler, and the (n == 1) branch inside eliminated.
+	uint32_t set = high;
+	// set &= _mm256_movemask_epi8(_mm256_slli_epi16(bytes, 1));
+	set &= _mm256_movemask_epi8(_mm256_add_epi16(bytes, bytes));
+	// A bitmask of the actual continuation bytes in the input
+	// Mark continuation bytes: those that have the high bit set but
+	// not the next one
+	const uint32_t cont = high ^ set;
+
+	// We add the shifted mask here instead of ORing it, which would
+	// be the more natural operation, so that this line can be done
+	// with one lea. While adding could give a different result due
+	// to carries, this will only happen for invalid UTF-8 sequences,
+	// and in a way that won't cause it to pass validation. Reasoning:
+	// Any bits for required continuation bytes come after the bits
+	// for their leader bytes, and are all contiguous. For a carry to
+	// happen, two of these bit sequences would have to overlap. If
+	// this is the case, there is a leader byte before the second set
+	// of required continuation bytes (and thus before the bit that
+	// will be cleared by a carry). This leader byte will not be
+	// in the continuation mask, despite being required. QEDish.
+	req += static_cast<uint64_t>(set) << 1;
+	set &= _mm256_movemask_epi8(_mm256_slli_epi16(bytes, 2));
+	req += static_cast<uint64_t>(set) << 2;
+	set &= _mm256_movemask_epi8(_mm256_slli_epi16(bytes, 3));
+	req += static_cast<uint64_t>(set) << 3;
+
+	// Check that continuation bytes match. We must cast req from uint64_t
+	// (which holds the carry mask in the upper half) to uint32_t, which
+	// zeroes out the upper bits
+	if (cont != static_cast<uint32_t>(req)) {
+		return false;
+	}
+
+	// Look up error masks for three consecutive nibbles.
+	const __m256i nibbles = _mm256_set1_epi8(0x0F);
+	const __m256i e_1 = _mm256_shuffle_epi8(error_1, _mm256_and_si256(_mm256_srli_epi16(shifted_bytes, 4), nibbles));
+	const __m256i e_2 = _mm256_shuffle_epi8(error_2, _mm256_and_si256(shifted_bytes, nibbles));
+	const __m256i e_3 = _mm256_shuffle_epi8(error_3, _mm256_and_si256(_mm256_srli_epi16(bytes, 4), nibbles));
+
+	// Check if any bits are set in all three error masks
+	if (!_mm256_testz_si256(_mm256_and_si256(e_1, e_2), e_3)) {
+		return false;
+	}
+
+	// Save continuation bits and input bytes for the next round
+	*last_cont = req >> sizeof(__m256i);
+	return true;
+}
+
+bool IsUTF8(const char *data, DWORD length) noexcept {
+	// Keep continuation bits from the previous iteration that carry over to
+	// each input chunk vector
+	uint32_t last_cont = 0;
+
+	uint32_t offset = 0;
+	// Deal with the input up until the last section of bytes
+	if (length >= sizeof(__m256i)) {
+		// We need a vector of the input byte stream shifted forward one byte.
+		// Since we don't want to read the memory before the data pointer
+		// (which might not even be mapped), for the first chunk of input just
+		// use vector instructions.
+		__m256i shifted_bytes = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data));
+		//__m256i shl_16 = _mm256_permute2x128_si256(shifted_bytes, _mm256_setzero_si256(), 0x03);
+		__m256i shl_16 = _mm256_permute2x128_si256(shifted_bytes, shifted_bytes, 10);
+		shifted_bytes = _mm256_alignr_epi8(shifted_bytes, shl_16, 15);
+
+		// Loop over input in sizeof(__m256i)-byte chunks, as long as we can safely read
+		// that far into memory
+		for (; offset + sizeof(__m256i) < length; offset += sizeof(__m256i)) {
+			const __m256i bytes = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data + offset));
+			if (!z_validate_vec_avx2(bytes, shifted_bytes, &last_cont)) {
+				return false;
+			}
+			shifted_bytes = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data + offset + sizeof(__m256i) - 1));
+		}
+	}
+
+	// Deal with any bytes remaining. Rather than making a separate scalar path,
+	// just fill in a buffer, reading bytes only up to length, and load from that.
+	if (offset < length) {
+		uint8_t buffer[sizeof(__m256i) + 1];
+		_mm256_storeu_si256(reinterpret_cast<__m256i *>(buffer), _mm256_setzero_si256());
+		buffer[sizeof(__m256i)] = 0;
+
+		if (offset != 0) {
+			buffer[0] = data[offset - 1];
+		}
+		__movsb(buffer + 1, reinterpret_cast<const uint8_t *>(data + offset), length - offset);
+
+		const __m256i shifted_bytes = _mm256_loadu_si256(reinterpret_cast<__m256i *>(buffer));
+		const __m256i bytes = _mm256_loadu_si256(reinterpret_cast<__m256i *>(buffer + 1));
+		if (!z_validate_vec_avx2(bytes, shifted_bytes, &last_cont)) {
+			return false;
+		}
+	}
+
+	// The input is valid if we don't have any more expected continuation bytes
+	return last_cont == 0;
+}
+
+// end NP2_USE_AVX2
+#elif NP2_USE_SSE2
+#if defined(__clang__)
+#include <tmmintrin.h>
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__target__("ssse3"), __always_inline__)) static inline
+#else
+static __forceinline
+#endif
+bool z_validate_vec_sse4(__m128i bytes, __m128i shifted_bytes, uint32_t *last_cont) noexcept {
+	// Error lookup tables for the first, second, and third nibbles
+	const __m128i error_1 = _mm_setr_epi8(
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x01, 0x00, 0x06, 0x38
+	);
+	const __m128i error_2 = _mm_setr_epi8(
+		0x0B, 0x01, 0x00, 0x00,
+		0x10, 0x20, 0x20, 0x20,
+		0x20, 0x20, 0x20, 0x20,
+		0x20, 0x24, 0x20, 0x20
+	);
+	const __m128i error_3 = _mm_setr_epi8(
+		0x29, 0x29, 0x29, 0x29,
+		0x29, 0x29, 0x29, 0x29,
+		0x2B, 0x33, 0x35, 0x35,
+		0x31, 0x31, 0x31, 0x31
+	);
+
+	// Quick skip for ascii-only input. If there are no bytes with the high bit
+	// set, we don't need to do any more work. We return either valid or
+	// invalid based on whether we expected any continuation bytes here.
+	const uint32_t high = _mm_movemask_epi8(bytes);
+	if (!high) {
+		return *last_cont == 0;
+	}
+
+	// Which bytes are required to be continuation bytes
+	uint32_t req = *last_cont;
+
+	// Compute the continuation byte mask by finding bytes that start with
+	// 11x, 111x, and 1111. For each of these prefixes, we get a bitmask
+	// and shift it forward by 1, 2, or 3. This loop should be unrolled by
+	// the compiler, and the (n == 1) branch inside eliminated.
+	uint32_t set = high;
+	// set &= _mm_movemask_epi8(_mm_slli_epi16(bytes, 1));
+	set &= _mm_movemask_epi8(_mm_add_epi16(bytes, bytes));
+	// A bitmask of the actual continuation bytes in the input
+	// Mark continuation bytes: those that have the high bit set but
+	// not the next one
+	const uint32_t cont = high ^ set;
+	// We add the shifted mask here instead of ORing it, which would
+	// be the more natural operation, so that this line can be done
+	// with one lea. While adding could give a different result due
+	// to carries, this will only happen for invalid UTF-8 sequences,
+	// and in a way that won't cause it to pass validation. Reasoning:
+	// Any bits for required continuation bytes come after the bits
+	// for their leader bytes, and are all contiguous. For a carry to
+	// happen, two of these bit sequences would have to overlap. If
+	// this is the case, there is a leader byte before the second set
+	// of required continuation bytes (and thus before the bit that
+	// will be cleared by a carry). This leader byte will not be
+	// in the continuation mask, despite being required. QEDish.
+	req += set << 1;
+	set &= _mm_movemask_epi8(_mm_slli_epi16(bytes, 2));
+	req += set << 2;
+	set &= _mm_movemask_epi8(_mm_slli_epi16(bytes, 3));
+	req += set << 3;
+
+	// Check that continuation bytes match. We must cast req from uint32_t
+	// (which holds the carry mask in the upper half) to uint16_t, which
+	// zeroes out the upper bits
+	if (cont != static_cast<uint16_t>(req)) {
+		return false;
+	}
+
+	// Look up error masks for three consecutive nibbles.
+	const __m128i nibbles = _mm_set1_epi8(0x0F);
+	const __m128i e_1 = _mm_shuffle_epi8(error_1, _mm_and_si128(_mm_srli_epi16(shifted_bytes, 4), nibbles));
+	const __m128i e_2 = _mm_shuffle_epi8(error_2, _mm_and_si128(shifted_bytes, nibbles));
+	__m128i e_3 = _mm_shuffle_epi8(error_3, _mm_and_si128(_mm_srli_epi16(bytes, 4), nibbles));
+
+	// Check if any bits are set in all three error masks
+#if defined(__SSE4_1__)
+	if (!_mm_testz_si128(_mm_and_si128(e_1, e_2), e_3)) {
+		return false;
+	}
+#else
+	e_3 = _mm_and_si128(_mm_and_si128(e_1, e_2), e_3);
+	const int mask = _mm_movemask_epi8(_mm_cmpeq_epi8(e_3, _mm_setzero_si128()));
+	if (mask != 0xFFFF) {
+		return false;
+	}
+#endif
+
+	// Save continuation bits and input bytes for the next round
+	*last_cont = req >> sizeof(__m128i);
+	return true;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__target__("ssse3")))
+#endif
+static inline bool z_validate_utf8_sse4(const char *data, DWORD length) noexcept {
+	// Keep continuation bits from the previous iteration that carry over to
+	// each input chunk vector
+	uint32_t last_cont = 0;
+
+	uint32_t offset = 0;
+	// Deal with the input up until the last section of bytes
+	if (length >= sizeof(__m128i)) {
+		// We need a vector of the input byte stream shifted forward one byte.
+		// Since we don't want to read the memory before the data pointer
+		// (which might not even be mapped), for the first chunk of input just
+		// use vector instructions.
+		__m128i shifted_bytes = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data));
+		//shifted_bytes = _mm_alignr_epi8(shifted_bytes, _mm_setzero_si128(), 15);
+		shifted_bytes = _mm_slli_si128(shifted_bytes, 1);
+
+		// Loop over input in sizeof(__m128i)-byte chunks, as long as we can safely read
+		// that far into memory
+		for (; offset + sizeof(__m128i) < length; offset += sizeof(__m128i)) {
+			const __m128i bytes = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + offset));
+			if (!z_validate_vec_sse4(bytes, shifted_bytes, &last_cont)) {
+				return false;
+			}
+			shifted_bytes = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + offset + sizeof(__m128i) - 1));
+		}
+	}
+
+	// Deal with any bytes remaining. Rather than making a separate scalar path,
+	// just fill in a buffer, reading bytes only up to length, and load from that.
+	if (offset < length) {
+		uint8_t buffer[sizeof(__m128i) + 1];
+		_mm_storeu_ps(reinterpret_cast<float *>(buffer), _mm_setzero_ps());
+		buffer[sizeof(__m128i)] = 0;
+
+		if (offset != 0) {
+			buffer[0] = data[offset - 1];
+		}
+		__movsb(buffer + 1, reinterpret_cast<const uint8_t *>(data + offset), length - offset);
+
+		const __m128i shifted_bytes = _mm_loadu_si128(reinterpret_cast<__m128i *>(buffer));
+		const __m128i bytes = _mm_loadu_si128(reinterpret_cast<__m128i *>(buffer + 1));
+		if (!z_validate_vec_sse4(bytes, shifted_bytes, &last_cont)) {
+			return false;
+		}
+	}
+
+	// The input is valid if we don't have any more expected continuation bytes
+	return last_cont == 0;
+}
+
+static inline int did_cpu_supports_ssse3() noexcept {
+	int info[4]{};
+	__cpuid(info, 0x00000001);
+	return info[2] & 0x0000200;
+}
+// end NP2_USE_SSE2
+#endif
+
+// Copyright (c) 2008-2010 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+// See https://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+
+#if !NP2_USE_AVX2
+bool IsUTF8(const char *data, DWORD length) noexcept {
+#if NP2_USE_SSE2
+	if (did_cpu_supports_ssse3()) {
+		return z_validate_utf8_sse4(data, length);
+	}
+#endif // NP2_USE_SSE2
+
+	enum {
+		UTF8_ACCEPT = 0,
+		UTF8_REJECT = 12,
+	};
+
+	static constexpr uint8_t utf8_dfa[] = {
+		// The first part of the table maps bytes to character classes that
+		// to reduce the size of the transition table and create bitmasks.
+		 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,  9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,
+		 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+		 8,8,2,2,2,2,2,2,2,2,2,2,2,2,2,2,  2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+		10,3,3,3,3,3,3,3,3,3,3,3,3,4,3,3, 11,6,6,6,5,8,8,8,8,8,8,8,8,8,8,8,
+
+		// The second part is a transition table that maps a combination
+		// of a state of the automaton and a character class to a state.
+		 0,12,24,36,60,96,84,12,12,12,48,72, 12,12,12,12,12,12,12,12,12,12,12,12,
+		12, 0,12,12,12,12,12, 0,12, 0,12,12, 12,24,12,12,12,12,12,24,12,24,12,12,
+		12,12,12,12,12,12,12,24,12,12,12,12, 12,24,12,12,12,12,12,12,12,24,12,12,
+		12,12,12,12,12,12,12,36,12,36,12,12, 12,36,12,12,12,12,12,36,12,36,12,12,
+		12,36,12,12,12,12,12,12,12,12,12,12,
+	};
+
+	const uint8_t *pt = reinterpret_cast<const uint8_t *>(data);
+	const uint8_t * const end = pt + length;
+	UINT state = UTF8_ACCEPT;
+
+#if 0 // NP2_USE_AVX2
+	while (pt + sizeof(__m256i) <= end) {
+		const __m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt));
+		const uint32_t mask = _mm256_movemask_epi8(chunk);
+		if (mask) {
+			// skip leading and trailing ASCII
+			const DWORD trailing = (state != UTF8_ACCEPT)? 0 : np2_ctz(mask);
+			DWORD leading;
+			_BitScanReverse(&leading, mask);
+
+			const uint8_t *temp = pt + trailing;
+			const uint8_t * const endPtr = pt + leading + 1;
+			do {
+				state = utf8_dfa[256 + state + utf8_dfa[*temp++]];
+			} while (temp < endPtr);
+			if (state == UTF8_REJECT || (leading != 31 && state != UTF8_ACCEPT)) {
+				return false;
+			}
+		} else if (state != UTF8_ACCEPT) {
+			return false;
+		}
+		pt += sizeof(__m256i);
+	}
+	// end NP2_USE_AVX2
+#elif NP2_USE_SSE2
+	while (pt + 2*sizeof(__m128i) <= end) {
+		const __m128i chunk1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt));
+		const __m128i chunk2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt + sizeof(__m128i)));
+		const uint32_t mask = mm_movemask_epi8(chunk1) | (mm_movemask_epi8(chunk2) << sizeof(__m128i));
+		if (mask) {
+			// skip leading and trailing ASCII
+			const DWORD trailing = (state != UTF8_ACCEPT)? 0 : np2_ctz(mask);
+			DWORD leading;
+			_BitScanReverse(&leading, mask);
+
+			const uint8_t *temp = pt + trailing;
+			const uint8_t * const endPtr = pt + leading + 1;
+			do {
+				state = utf8_dfa[256 + state + utf8_dfa[*temp++]];
+			} while (temp < endPtr);
+			if (state == UTF8_REJECT || (leading != 31 && state != UTF8_ACCEPT)) {
+				return false;
+			}
+		} else if (state != UTF8_ACCEPT) {
+			return false;
+		}
+		pt += 2*sizeof(__m128i);
+	}
+	// end NP2_USE_SSE2
+#elif defined(_WIN64)
+	while (pt + sizeof(uint64_t) <= end) {
+		const uint64_t val = *(reinterpret_cast<const uint64_t *>(pt));
+		if (val & UINT64_C(0x8080808080808080)) {
+#if 0
+			state = utf8_dfa[256 + state + utf8_dfa[pt[0]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[1]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[2]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[3]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[4]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[5]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[6]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[7]]];
+#else
+			// same as above
+			state = utf8_dfa[256 + state + utf8_dfa[val & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 8) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 16) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 24) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 32) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 40) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 48) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[val >> 56]];
+#endif
+			if (state == UTF8_REJECT) {
+				return false;
+			}
+		} else if (state != UTF8_ACCEPT) {
+			return false;
+		}
+		pt += sizeof(uint64_t);
+	}
+	// end _WIN64
+#else
+	while (pt + sizeof(uint32_t) <= end) {
+		const uint32_t val = *(reinterpret_cast<const uint32_t *>(pt));
+		if (val & 0x80808080U) {
+#if 0
+			state = utf8_dfa[256 + state + utf8_dfa[pt[0]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[1]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[2]]];
+			state = utf8_dfa[256 + state + utf8_dfa[pt[3]]];
+#else
+			// same as above
+			state = utf8_dfa[256 + state + utf8_dfa[val & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 8) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[(val >> 16) & 255]];
+			state = utf8_dfa[256 + state + utf8_dfa[val >> 24]];
+#endif
+			if (state == UTF8_REJECT) {
+				return false;
+			}
+		} else if (state != UTF8_ACCEPT) {
+			return false;
+		}
+		pt += sizeof(uint32_t);
+	}
+	// end _WIN32
+#endif
+
+	while (pt < end) {
+		state = utf8_dfa[256 + state + utf8_dfa[*pt++]];
+	}
+
+	return state == UTF8_ACCEPT;
+}
+#endif // !NP2_USE_AVX2
+
+static const char *CheckUTF7(const char *pTest, DWORD nLength) noexcept {
+	const char *pt = pTest;
+#if NP2_USE_AVX512
+	if (nLength >= sizeof(__m512i)) {
+		const char * const end = pt + nLength - sizeof(__m512i);
+		do {
+			const __m512i chunk = _mm512_loadu_si512(pt);
+			if (_mm512_movepi8_mask(chunk)) {
+				return pt;
+			}
+			pt += sizeof(__m512i);
+		} while (pt <= end);
+	}
+
+	nLength &= sizeof(__m512i) - 1;
+	if (nLength != 0) {
+		const __m512i chunk = _mm512_loadu_si512(pt);
+		uint64_t mask = _mm512_movepi8_mask(chunk);
+		mask = bit_zero_high_u64(mask, nLength);
+		return mask ? pt : nullptr;
+	}
+	return nullptr;
+#elif NP2_USE_AVX2
+	if (nLength >= 2*sizeof(__m256i)) {
+		const char * const end = pt + nLength - 2*sizeof(__m256i);
+		do {
+			const __m256i chunk1 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt));
+			const __m256i chunk2 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt + sizeof(__m256i)));
+			const uint32_t mask = _mm256_movemask_epi8(_mm256_or_si256(chunk1, chunk2));
+			if (mask) {
+				return pt;
+			}
+			pt += 2*sizeof(__m256i);
+		} while (pt <= end);
+	}
+
+	nLength &= 2*sizeof(__m256i) - 1;
+	if (nLength != 0) {
+		uint32_t mask = 0;
+		__m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt));
+		uint32_t last = _mm256_movemask_epi8(chunk);
+		if (nLength > sizeof(__m256i)) {
+			nLength &= sizeof(__m256i) - 1;
+			mask = last;
+			chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(pt + sizeof(__m256i)));
+			last = _mm256_movemask_epi8(chunk);
+		}
+		mask |= bit_zero_high_u32(last, nLength);
+		return mask ? pt : nullptr;
+	}
+	return nullptr;
+	// end NP2_USE_AVX2
+#elif NP2_USE_SSE2
+	if (nLength >= 4*sizeof(__m128i)) {
+		const char * const end = pt + nLength - 4*sizeof(__m128i);
+		do {
+			const __m128i chunk1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt));
+			const __m128i chunk2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt + sizeof(__m128i)));
+			const __m128i chunk3 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt + 2*sizeof(__m128i)));
+			const __m128i chunk4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt + 3*sizeof(__m128i)));
+			const uint32_t mask = _mm_movemask_epi8(_mm_or_si128(_mm_or_si128(_mm_or_si128(chunk1, chunk2), chunk3), chunk4));
+			if (mask) {
+				return pt;
+			}
+			pt += 4*sizeof(__m128i);
+		} while (pt <= end);
+	}
+
+	nLength &= 4*sizeof(__m128i) - 1;
+	if (nLength != 0) {
+		const char * const end = pt;
+		__m128i chunk = _mm_setzero_si128();
+#if defined(__clang__)
+		#pragma clang loop unroll(disable)
+#endif
+		for (UINT i = 0; i < nLength / sizeof(__m128i); i++) {
+			chunk = _mm_or_si128(chunk, _mm_loadu_si128(reinterpret_cast<const __m128i *>(pt)));
+			pt += sizeof(__m128i);
+		}
+
+		uint32_t mask = _mm_movemask_epi8(chunk);
+		nLength &= sizeof(__m128i) - 1;
+		if (nLength != 0) {
+			const uint32_t last = _mm_movemask_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i *>(pt)));
+			mask |= bit_zero_high_u32(last, nLength);
+		}
+		return mask ? end : nullptr;
+	}
+	return nullptr;
+	// end NP2_USE_SSE2
+#elif defined(_WIN64)
+	const char * const end = pt + nLength;
+	nLength &= sizeof(uint64_t) - 1;
+	nLength = (sizeof(uint64_t) - nLength)*8;
+	do {
+		uint64_t value = *(reinterpret_cast<const uint64_t *>(pt));
+		pt += sizeof(uint64_t);
+		value &= UINT64_C(0x8080808080808080);
+		if (value != 0) {
+			if (pt > end) {
+				value <<= nLength;
+				if (value == 0) {
+					return nullptr;
+				}
+			}
+			return pt - sizeof(uint64_t);
+		}
+	} while (pt < end);
+	return nullptr;
+	// end _WIN64
+#else
+	const char * const end = pt + nLength;
+	nLength &= sizeof(uint32_t) - 1;
+	nLength = (sizeof(uint32_t) - nLength)*8;
+	do {
+		uint32_t value = *(reinterpret_cast<const uint32_t *>(pt));
+		pt += sizeof(uint32_t);
+		value &= 0x80808080U;
+		if (value != 0) {
+			if (pt > end) {
+				value <<= nLength;
+				if (value == 0) {
+					return nullptr;
+				}
+			}
+			return pt - sizeof(uint32_t);
+		}
+	} while (pt < end);
+	return nullptr;
+	// end _WIN32
+#endif
+}
+
+#if 0
+/* byte length of UTF-8 sequence based on value of first byte.
+	 for UTF-16 (21-bit space), max. code length is 4, so we only need to look
+	 at 4 upper bits.
+ */
+static const INT utf8_lengths[16] = {
+	1, 1, 1, 1, 1, 1, 1, 1, 	/* 0000 to 0111 : 1 byte (plain ASCII) */
+	0, 0, 0, 0, 			/* 1000 to 1011 : not valid */
+	2, 2, 				/* 1100, 1101 : 2 bytes */
+	3, 					/* 1110 : 3 bytes */
+	4					/* 1111 :4 bytes */
+};
+
+/*++
+Function :
+	UTF8_mbslen_bytes [INTERNAL]
+	Calculates the byte size of a NULL-terminated UTF-8 string.
+Parameters :
+	char *utf8_string : string to examine
+Return value :
+	size (in bytes) of a NULL-terminated UTF-8 string.
+	1 if invalid NULL-terminated UTF-8 string
+--*/
+INT UTF8_mbslen_bytes(LPCSTR utf8_string) noexcept {
+	INT length = 0;
+	const uint8_t *pt = reinterpret_cast<const uint8_t *>(utf8_string);
+
+	while (*pt) {
+		INT code_size;
+		const BYTE ch = *pt;
+
+		if ((ch <= 0xF7) && (0 != (code_size = utf8_lengths[ ch >> 4 ]))) {
+			length += code_size;
+			pt += code_size;
+		} else {
+			/* we got an invalid byte value but need to count it,
+				 it will be later ignored during the string conversion */
+			//WARN("invalid first byte value 0x%02X in UTF-8 sequence!\n", byte);
+			length++;
+			pt++;
+		}
+	}
+	length++; /* include NULL terminator */
+
+	return length;
+}
+
+/*++
+Function :
+	UTF8_mbslen [INTERNAL]
+	Calculates the character size of a NULL-terminated UTF-8 string.
+Parameters :
+	char *utf8_string : string to examine
+	int byte_length : byte size of string
+Return value :
+	size (in characters) of a UTF-8 string.
+	-1 if invalid UTF-8 string
+--*/
+INT UTF8_mbslen(LPCSTR source, INT byte_length) noexcept {
+	INT wchar_length = 0;
+	const uint8_t *pt = reinterpret_cast<const uint8_t *>(utf8_string);
+
+	while (byte_length > 0) {
+		INT code_size;
+		const BYTE ch = *pt;
+		/* UTF-16 can't encode 5-byte and 6-byte sequences, so maximum value
+			 for first byte is 11110111. Use lookup table to determine sequence
+			 length based on upper 4 bits of first byte */
+		if ((ch <= 0xF7) && (0 != (code_size = utf8_lengths[ ch >> 4]))) {
+			/* 1 sequence == 1 character */
+			wchar_length++;
+
+			if (code_size == 4) {
+				wchar_length++;
+			}
+
+			pt += code_size;				/* increment pointer */
+			byte_length -= code_size;		/* decrement counter*/
+		} else {
+			/*
+				 unlike UTF8_mbslen_bytes, we ignore the invalid characters.
+				 we only report the number of valid characters we have encountered
+				 to match the Windows behavior.
+			*/
+			//WARN("invalid byte 0x%02X in UTF-8 sequence, skipping it!\n",
+			//		 byte);
+			pt++;
+			byte_length--;
+		}
+	}
+
+	return wchar_length;
+}
+#endif
+
+
+LPSTR RecodeAsUTF8(LPSTR lpData, DWORD *cbData, UINT codePage, DWORD flags) noexcept {
+	DWORD size = *cbData;
+	DWORD cbDataWide = (size + 16) * sizeof(WCHAR);
+	LPWSTR lpDataWide = static_cast<LPWSTR>(NP2HeapAlloc(cbDataWide));
+	cbDataWide = MultiByteToWideChar(codePage, flags, lpData, size, lpDataWide, size + 16);
+	if (cbDataWide) {
+		size = cbDataWide * kMaxMultiByteCount + 16;
+		lpData = static_cast<char *>(NP2HeapAlloc(size));
+		*cbData = WideCharToMultiByte(CP_UTF8, 0, lpDataWide, cbDataWide, lpData, size, nullptr, nullptr);
+	} else {
+		lpData = nullptr;
+		*cbData = 0;
+	}
+	NP2HeapFree(lpDataWide);
+	return lpData;
+}
+
+int EditDetermineEncoding(LPCWSTR pszFile, char *lpData, DWORD cbData, int *encodingFlag) noexcept {
+	// TODO: scheme default encoding
+	LPCWSTR const pszExt = PathFindExtension(pszFile);
+	int preferedEncoding = CPI_NONE;
+	if (bLoadNFOasOEM && (StrCaseEqual(pszExt, L".nfo") || StrCaseEqual(pszExt, L".diz"))) {
+		preferedEncoding = g_DOSEncoding;
+	} else if (StrCaseEqual(pszExt, L".bat") || StrCaseEqual(pszExt, L".cmd")) {
+		preferedEncoding = CPI_DEFAULT;
+	} else if (StrEqual(pszExt, L".sh") || StrStartsWith(lpData, "#!/")) {
+		// shell script: #!/bin/sh[LF]
+		preferedEncoding = CPI_UTF8;
+	} else if (StrCaseEqual(pszExt, L".vhd") || StrCaseEqual(pszExt, L".vhdl")) {
+		// VHDL should use ISO-8859-1 8-bit encoding
+		preferedEncoding = Encoding_GetIndex(1252);
+	}
+
+	int iEncoding = CPI_DEFAULT;
+	// default encoding for empty file.
+	if (cbData == 0) {
+		fvCurFile.Init(nullptr, 0);
+		*encodingFlag = EncodingFlag_UTF7;
+		if (iSrcEncoding >= CPI_FIRST) {
+			iEncoding = iSrcEncoding;
+		} else if (iWeakSrcEncoding >= CPI_FIRST) {
+			iEncoding = iWeakSrcEncoding;
+		} else if (preferedEncoding >= CPI_FIRST) {
+			iEncoding = preferedEncoding;
+		} else if (bLoadASCIIasUTF8) {
+			iEncoding = CPI_UTF8;
+		} else {
+			iEncoding = iDefaultEncoding;
+		}
+		return iEncoding;
+	}
+
+	// check Unicode / UTF-16 BOM
+	const UINT bom = *(reinterpret_cast<const uint16_t *>(lpData));
+	if (cbData < MAX_NON_UTF8_SIZE && (Encoding_IsUnicode(iSrcEncoding) // reload as UTF-16
+		|| (iSrcEncoding < CPI_FIRST && (cbData & 1) == 0 && (bom == BOM_UTF16LE || bom == BOM_UTF16BE)))) {
+		bool bBOM = iSrcEncoding < CPI_FIRST;
+		bool bReverse = bom == BOM_UTF16BE;
+		if (iSrcEncoding == CPI_UNICODE) {
+			bBOM = bom == BOM_UTF16LE;
+			bReverse = false;
+		} else if (iSrcEncoding == CPI_UNICODEBE) {
+			bBOM = bom == BOM_UTF16BE;
+			bReverse = true;
+		}
+
+		static_assert(CPI_UNICODE + 1 == CPI_UNICODEBE);
+		static_assert(CPI_UNICODEBOM + 2 == CPI_UNICODE);
+		static_assert(CPI_UNICODEBEBOM + 2 == CPI_UNICODEBE);
+		iEncoding = CPI_UNICODE + bReverse;
+		iEncoding -= bBOM << 1;
+		return iEncoding;
+	}
+
+	fvCurFile.Init(lpData, cbData);
+	// check UTF-8 BOM
+	const bool utf8Sig = IsUTF8Signature(lpData);
+	if (Encoding_IsUTF8(iSrcEncoding) // reload as UTF-8
+		|| (iSrcEncoding < CPI_FIRST && utf8Sig)) {
+		static_assert(CPI_UTF8 + 1 == CPI_UTF8SIGN);
+		iEncoding = CPI_UTF8 + utf8Sig;
+		return iEncoding;
+	}
+
+	// load large file without encoding conversion, i.e. loaded as UTF-8 or ANSI only.
+	if (cbData >= MAX_NON_UTF8_SIZE) {
+		if (iSrcEncoding != CPI_DEFAULT && (utf8Sig || IsUTF8(lpData, cbData))) {
+			iEncoding = CPI_UTF8 + utf8Sig;
+		}
+		return iEncoding;
+	}
+
+	// check UTF-16 without BOM for Latin
+	if ((cbData & 1) == 0 && iSrcEncoding < CPI_FIRST
+		// odd or even byte is lower C0 control character U+0000 to U+0007
+		&& ((bom & 0xF800) == 0 || (bom & 0x00F8) == 0)
+		&& fvCurFile.mask == 0) {
+#if 0
+		// Basic Latin and Latin-1: U+0000 to U+00FF
+		iEncoding = DetectUTF16Latin1(lpData, cbData);
+		if (iEncoding != CPI_DEFAULT) {
+			return iEncoding;
+		}
+#endif
+		// Latin Extended-A U+0100 to NKo U+07FF
+		iEncoding = DetectUTF16LatinExt(lpData, cbData);
+		if (iEncoding != CPI_DEFAULT) {
+			return iEncoding;
+		}
+	}
+
+	// treat as unreliable encoding declaration as we don't follow strict parse rules.
+	const int sniffedEncoding = fvCurFile.GetEncoding();
+	// check 7-bit ASCII
+	const char * const multiData = CheckUTF7(lpData, cbData);
+	if (multiData == nullptr) {
+		// 7-bit / any encoding, similar to empty file
+		*encodingFlag = EncodingFlag_UTF7;
+		if (iSrcEncoding >= CPI_FIRST) {
+			iEncoding = iSrcEncoding;
+		} else if (iWeakSrcEncoding >= CPI_FIRST && !Encoding_IsUnicode(iWeakSrcEncoding)) {
+			iEncoding = iWeakSrcEncoding;
+		} else if (preferedEncoding >= CPI_FIRST) {
+			iEncoding = preferedEncoding;
+		} else if (sniffedEncoding >= CPI_FIRST) {
+			iEncoding = sniffedEncoding;
+			const UINT codePage = mEncoding[iEncoding].uCodePage;
+			const UINT page = GetEncodingAlias(codePage);
+			if (codePage != page) {
+				iEncoding = Encoding_GetIndex(page);
+			}
+		} else if (bLoadASCIIasUTF8) {
+			iEncoding = CPI_UTF8;
+		} else if (!Encoding_IsUnicode(iDefaultEncoding)) {
+			iEncoding = iDefaultEncoding;
+		}
+		return (iEncoding == CPI_UTF8SIGN) ? CPI_UTF8 : iEncoding;
+	}
+
+	// reload with specific encoding
+	if (iSrcEncoding >= CPI_FIRST && (mEncoding[iSrcEncoding].uFlags & (NCP_8BIT | NCP_DEFAULT)) != 0) {
+		return iSrcEncoding;
+	}
+
+	// avoid validating initial ASCII for multi-byte encoding
+	const DWORD multiLen = static_cast<DWORD>(lpData + cbData - multiData);
+	//printf("%s initial ASCII: %u=%u - %u\n", __func__, (unsigned)(cbData - multiLen), (unsigned)cbData, (unsigned)multiLen);
+	// prefer UTF-8 when no encoding specified
+	// StopWatch watch;
+	// watch.Start();
+	if (IsUTF8(multiData, multiLen)) {
+		// watch.Stop();
+		// watch.ShowLog("UTF8 time");
+		return CPI_UTF8;
+	}
+	// watch.Stop();
+	// watch.ShowLog("UTF8 time");
+
+	// brute force test other encoding
+	const int encodings[4] = {
+		// auto reload with current encoding
+		iWeakSrcEncoding,
+		// fallback encoding
+		preferedEncoding,
+		sniffedEncoding,
+		iDefaultEncoding,
+	};
+	for (UINT i = 0; i < COUNTOF(encodings); i++) {
+		iEncoding = encodings[i];
+		if (iEncoding > CPI_DEFAULT && (mEncoding[iEncoding].uFlags & NCP_8BIT) != 0) {
+			const UINT codePage = mEncoding[iEncoding].uCodePage;
+			if (IsValidMultiByte(codePage, multiData, multiLen)) {
+				if (i == 2) {
+					const UINT page = GetEncodingAlias(codePage);
+					if (page != codePage && IsValidMultiByte(page, multiData, multiLen)) {
+						iEncoding = Encoding_GetIndex(page);
+					}
+				}
+				return iEncoding;
+			}
+		}
+	}
+
+	// test system ANSI code page
+	iEncoding = CPI_DEFAULT;
+	bool tryUnicode = false;
+	const UINT acp = GetACP();
+	if (acp == CP_UTF8 || !IsValidMultiByte(acp, multiData, multiLen)) {
+		tryUnicode = true;
+		*encodingFlag = EncodingFlag_Invalid;
+	}
+	// detect binary file
+	if (MaybeBinaryFile(reinterpret_cast<const uint8_t *>(lpData), cbData, encodingFlag)) {
+		tryUnicode = true;
+	}
+	// check UTF-16 without BOM
+	if (tryUnicode && (cbData & 1) == 0 && fvCurFile.mask == 0) {
+		iEncoding = DetectUnicode(lpData, cbData, bSkipUnicodeDetection);
+		if (iEncoding != CPI_DEFAULT) {
+#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
+			*encodingFlag = (iEncoding == CPI_UNICODEBE) ? EncodingFlag_Reversed : EncodingFlag_Invalid;
+#else
+			*encodingFlag = EncodingFlag_Invalid;
+#endif
+		}
+	}
+
+	// unknown encoding
+	return iEncoding;
+}
+
+// see updateCaseSensitivityBlock() in scintilla/scripts/GenerateCaseConvert.py
+//case++Autogenerated -- start of section automatically generated
+// Created with Python 3.15.0a1, Unicode 17.0.0
+#define kUnicodeCaseSensitiveFirst	0x0600U
+#define kUnicodeCaseSensitiveMax	0x1e943U
+
+static const uint8_t UnicodeCaseSensitivityIndex[] = {
+// block index
+0, 0, 0, 0, 144, 145, 0, 0, 0, 0, 0, 0, 146, 147, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0, 148, 0, 0, 0, 3, 4, 5, 6,
+0, 7, 0, 0, 8, 0, 75, 76, 0, 0, 0, 77, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+0, 0, 0, 0, 0, 0, 0, 0, 0, 214, 0, 0, 0, 0, 149, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 78, 0, 0, 0, 79,
+// mask index
+0, 0, 0, 0, 0, 8, 48, 49, 0, 0, 0, 0, 0, 8, 8, 50, 0, 0, 0, 0, 51, 49, 0, 0, 0, 0, 0, 52, 53, 0, 0, 0,
+8, 8, 8, 8, 54, 8, 8, 8, 50, 8, 55, 56, 8, 57, 58, 59, 0, 60, 53, 8, 61, 0, 0, 0, 0, 0, 0, 0, 0, 62, 8, 63,
+8, 8, 8, 64, 8, 8, 8, 65, 8, 66, 0, 0, 0, 0, 0, 0, 0, 0, 8, 67, 68, 0, 0, 0, 0, 69, 8, 70, 71, 72, 73, 74,
+0, 0, 75, 76, 8, 8, 0, 0, 77, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 8, 8, 78, 0, 0, 76, 79, 68,
+0, 0, 0, 80, 81, 82, 0, 0, 0, 0, 0, 0, 8, 83, 8, 83, 0, 0, 76, 84, 85, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 0,
+0, 0, 8, 8, 0, 86, 87, 0, 8, 8, 88, 0, 0, 0, 0, 0,
+};
+
+static const uint32_t UnicodeCaseSensitivityMask[] = {
+0x00000000U, 0x00000000U, 0x07fffffeU, 0x07fffffeU, 0x00000000U, 0x00200000U, 0xff7fffffU, 0xff7fffffU,
+0xffffffffU, 0xfeffffffU, 0xffffffffU, 0xffffffffU, 0xffffdfffU, 0xb3fff3ffU, 0xfffffff0U, 0xffffffffU,
+0xffffffffU, 0xfc0ffffdU, 0x1adfffffU, 0x20269f7bU, 0x60041f8dU, 0x50000000U, 0x00000000U, 0x00000000U,
+0x00081583U, 0x00020000U, 0x00000024U, 0xb8cf0000U, 0xffffd740U, 0xfffffffbU, 0xffe3ffffU, 0xefbfffffU,
+0xffffffffU, 0xffffffffU, 0xffffffffU, 0xffffffffU, 0xfffffc03U, 0xffffffffU, 0xffffffffU, 0xffffffffU,
+0xffffffffU, 0xfffeffffU, 0x007fffffU, 0xfffffffeU, 0x000000ffU, 0x00000000U, 0x00000000U, 0x00000000U,
+0xffff20bfU, 0xe7ffffffU, 0x3f3fffffU, 0xffff07ffU, 0x22000000U, 0x00004000U, 0x4fffffffU, 0xaaff3f3fU,
+0x3fffffffU, 0x5fdfffffU, 0x0fcf1fdcU, 0x1fdc1fffU, 0x00040c40U, 0x00000018U, 0xffc00000U, 0x000003ffU,
+0xc06dffffU, 0x000c780fU, 0x000020bfU, 0x00003fffU, 0x0fffffffU, 0xfffcfffcU, 0xfe00ffffU, 0xffdf38ffU,
+0xffff7fffU, 0x1fffffffU, 0x00600000U, 0x00080000U, 0xffff0000U, 0x00f8007fU, 0x0000ffffU, 0xff0fffffU,
+0xf7ff0000U, 0xffb7f7ffU, 0x1bfbfffbU, 0x0007ffffU, 0xffff003fU, 0x0000003fU, 0xf9ffffffU, 0x000fffffU,
+0x0000000fU,
+};
+
+// case sensitivity for ch in [kUnicodeCaseSensitiveFirst, kUnicodeCaseSensitiveMax]
+static inline bool IsCharacterCaseSensitiveSecond(uint32_t ch) noexcept {
+	uint32_t block = ch >> 8;
+	uint32_t index = UnicodeCaseSensitivityIndex[block & 0x7f];
+	block = index ^ (block >> 1);
+	index &= ((block - 0x40) >> 8) & 0x3f;
+	if (index) {
+		ch = ch & 0xff;
+		index = 120 + (index << 3);
+		index = UnicodeCaseSensitivityIndex[index + (ch >> 5)];
+		return bittest(UnicodeCaseSensitivityMask + index, ch & 31);
+	}
+	return false;
+}
+//case--Autogenerated -- end of section automatically generated
+
+bool IsStringCaseSensitiveW(LPCWSTR pszTextW) noexcept {
+	if (StrIsEmpty(pszTextW)) {
+		return false;
+	}
+
+	LPCWSTR ptr = pszTextW;
+	uint32_t ch;
+	while ((ch = *ptr++) != 0) {
+		if (ch < kUnicodeCaseSensitiveFirst) {
+			if (BitTestEx(UnicodeCaseSensitivityMask, ch)) {
+				return true;
+			}
+		} else {
+			if (IS_SURROGATE_PAIR(ch, *ptr)) {
+				ch = UTF16_TO_UTF32(ch, *ptr);
+				++ptr;
+				if (ch > kUnicodeCaseSensitiveMax) {
+					continue;
+				}
+			}
+			if (IsCharacterCaseSensitiveSecond(ch)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool IsStringCaseSensitiveA(LPCSTR pszText) noexcept {
+	if (StrIsEmpty(pszText)) {
+		return false;
+	}
+
+	const char *ptr = pszText;
+	uint8_t ch;
+	while ((ch = *ptr) != 0) {
+		if (ch & 0x80) {
+			// convert to Unicode
+			const UINT cpEdit = SciCall_GetCodePage();
+			LPCSTR start = ptr;
+			const size_t length = strlen(start) + 1;
+			LPWSTR pszTextW = static_cast<LPWSTR>(NP2HeapAlloc(length * sizeof(WCHAR)));
+			MultiByteToWideChar(cpEdit, 0, start, -1, pszTextW, static_cast<int>(length));
+			const bool result = IsStringCaseSensitiveW(pszTextW);
+			NP2HeapFree(pszTextW);
+			return result;
+		}
+
+		// ASCII
+		ch = UnsafeLower(ch);
+		if (ch >= 'a' && ch <= 'z') {
+			return true;
+		}
+		++ptr;
+	}
+	return false;
+}
+
+/**
+ * Convert C style \a, \b, \f, \n, \r, \t, \v, \xHH and \uHHHH into their indicated characters.
+ */
+UINT TransformBackslashes(char *pszInput, UINT cpEdit, const DBCSByteMask *byteMask) noexcept {
+	// same as BuiltinRegex::SubstituteByPosition()
+	static constexpr char backslashTable['x' - '\\' + 1] = {
+		'\\',	// '\'
+		0,		// ]
+		0,		// ^
+		0,		// _
+		0,		// `
+		'\a',	// a
+		'\b',	// b
+		0,		// c
+		0,		// d
+		'\x1B',	// e
+		'\f',	// f
+		0,		// g
+		0,		// h
+		0,		// i
+		0,		// j
+		0,		// k
+		0,		// l
+		0,		// m
+		'\n',	// n
+		0,		// o
+		0,		// p
+		0,		// q
+		'\r',	// r
+		0,		// s
+		'\t',	// t
+		'\x86',	// u
+		'\v',	// v
+		0,		// w
+		'\x84',	// x
+	};
+
+	char *output = pszInput;
+	const char *input = pszInput;
+
+	while (*input) {
+		uint8_t ch = *input++;
+		const uint8_t chNext = input[0];
+		if (ch == '\\') {
+			const unsigned value = chNext - '\\';
+			const char escape = (value < sizeof(backslashTable)) ? backslashTable[value] : '\0';
+			if (static_cast<signed char>(escape) > 0) {
+				ch = escape;
+				input++;
+			} else if (escape != 0) {
+				const unsigned digitCount = (escape & 7);
+				WCHAR wchBuf[2]{}; // read adjacent hex to corect handle UTF-16 surrogate pair
+				unsigned index = 0;
+				const char *ptr = input - 1;
+				while (true) {
+					unsigned wch = 0;
+					unsigned count = 2;
+					ptr += 2;
+					for (; count < digitCount; count++, ptr++) {
+						const int hex = GetHexDigit(ptr[0]);
+						if (hex < 0) {
+							break;
+						}
+						wch = (wch << 4) | hex;
+					}
+					if (count != digitCount) {
+						break;
+					}
+					wchBuf[index++] = static_cast<WCHAR>(wch);
+					if (index == COUNTOF(wchBuf)) {
+						if (IS_HIGH_SURROGATE(wch)) {
+							index--;
+						}
+						break;
+					}
+					if (!IS_HIGH_SURROGATE(wch) || ptr[0] != '\\' || ptr[1] != 'u') {
+						break;
+					}
+				}
+				if (index != 0) {
+					input += digitCount*index - 1;
+					if (digitCount == 4 || (index == 1 && wchBuf[0] < 0x80)) {
+						ch = static_cast<uint8_t>(wchBuf[0]); // \xHH or ASCII
+					} else {
+						index = WideCharToMultiByte(cpEdit, 0, wchBuf, index, output, static_cast<int>(input - output), nullptr, nullptr);
+						output += index;
+						continue;
+					}
+				}
+			}
+		} else if (byteMask && byteMask->IsLeadByte(ch) && byteMask->IsTrailByte(chNext)) {
+			*output++ = ch;
+			ch = chNext;
+			input++;
+		}
+		*output++ = ch;
+	}
+
+	*output = '\0';
+	return static_cast<UINT>(output - pszInput);
+}

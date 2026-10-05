@@ -1,0 +1,681 @@
+Text File
+	txt
+	text
+	wtx				Text Document
+	doc
+
+	Readme[.*]
+
+2nd Text File
+	log
+	asc				PGP ASCII Armored File
+	map				Linker map file
+	bnf				BNF grammar
+
+C/C++ Source
+	c
+	cpp
+	cxx				C++ Source File
+	cc				C++ Source File
+	h				C/C++ Header File
+	hpp				C++ Header File
+	cppm			Clang C++ Module
+	hxx				C++ Header File
+	hh				C++ Header File
+	inl				C++ Inline File
+	ixx				Visual C++ Module interface
+	pch				Precompiled Header File
+		idl			Interface Definition Language
+		odl			Object Definition Language
+		midl		Microsoft Interface Definition Language
+	m				Objective C Source File
+	mm				Objective C++ Source File
+	xpm				X11 Pixmap Graphic
+	cl				OpenCL Source File
+	cu				CUDA Source File
+	cuh				CUDA Header File
+
+	*.h.in
+
+	[x] rs			Android RenderScript
+
+C# Source
+	cs
+	csx				C# Script
+	vala			GNOME Vala
+	vapi			Vala API File
+	cake			Cake (C# Make), https://cakebuild.net/
+
+CSS Style Sheet
+	css
+	scss			Sassy CSS, https://sass-lang.com/
+	less			Less CSS, https://lesscss.org/
+	hss				HSS, https://github.com/ncannasse/hss
+	wxss			WeChat Mini Program, https://developers.weixin.qq.com/miniprogram/dev/framework/view/wxss.html
+
+Java Source
+	java
+	jad				Jad Decompiler
+	aidl			Android IDL
+	bsh				BeanShell
+
+JavaScript
+	js
+	jse				JScript Encoded File
+	jsm				JavaScript Module
+	jsx				JavaScript with JSX
+	cjs				CommonJS Module
+	mjs				ECMAScript Module
+	qs				Qt Installer Framework Script
+
+JSON Document
+	json
+	har				Firefox -> Web Developer -> Network
+	ipynb			Jupyter Notebook
+	wxcp			CodeLite wxCrafter Resource
+	jshintrc		JSHint Configuration File
+	eslintrc		ESLint Configuration File, https://eslint.org/
+	babelrc			Babel Configuration File, https://babeljs.io/
+	prettierrc		Prettier Configuration File, https://prettier.io/
+	stylelintrc		Stylelint Configuration File, https://stylelint.io/
+	jsonld			JSON for Linked Data, https://json-ld.org/
+	jsonc			JSON with Comments, https://code.visualstudio.com/docs/languages/json#_json-with-comments
+	json5			JSON5, https://json5.org/
+	jsonl			JSON Lines, https://jsonlines.org/
+	arcconfig		Phabricator Arcanist
+	arclint			Phabricator Arcanist
+	jscop			JSCoP File, https://polly.llvm.org/documentation/passes.html
+
+PHP Script
+	php
+	phps			PHP Source
+	phpt			PHP Test Script
+	phtml			PHP Web Page
+	php_cs			PHP-CS-Fixer
+	eyecode			eyeOS
+
+Python Script
+	py
+	pyw
+	pyx				Cython Implementation File
+	pxd				Cython Definition File
+	pxi				Cython Include File
+	pyi				Stub File (PEP 484), https://www.python.org/dev/peps/pep-0484/#stub-files
+	py3				used by some people for Python 3 code
+	pth				Path Configuration File, https://docs.python.org/3.9/library/site.html
+	boo				Boo
+	empy			EmPy
+	cobra			Cobra
+	gs				GNOME Genie
+
+	bzl				Bazel BUILD file, https://docs.bazel.build/versions/main/build-ref.html
+	bazel
+	BUILD
+	mojo			https://docs.modular.com/mojo/programming-manual.html
+
+Ruby Script
+	rb
+	ruby
+	rbw
+	rake			Ruby Makefile
+	rjs				Ruby JavaScript
+	gemspec 		RubyGems Specification
+	podspec			CocoaPods
+
+	Rakefile		Ruby Makefile
+	Podfile			CocoaPods
+
+	rbs				Ruby type signature, https://github.com/ruby/rbs
+	Steepfile		Ruby Static type checker, https://github.com/soutaro/steep
+
+	cr				Crystal		https://crystal-lang.org/
+
+SQL Query
+	sql
+	mysql
+	hsql			Apache Hive
+
+Web Source Code
+	html
+	htm
+	shtml			Server Side Include HTML File
+	xhtml			Extensible Hypertext Markup Language File
+	asp				Active Server Page
+	aspx			Active Server Page Extended File
+	jsp				Java Server Page
+	rhtml			ERB, HTML with embedded Ruby
+	vue				Vue Single-File Components, https://vuejs.org/guide/scaling-up/sfc.html
+	hbs				Ember Template, https://guides.emberjs.com/release/components/
+	svelte			Svelte Template, https://svelte.dev/docs/introduction
+	mht				MHTML Web Archive
+	htd				Adobe ExtendScript HTML file
+	htt				Hypertext Template File
+	hta				HTML Application
+	htc				HTML Component File
+	cfm				ColdFusion Markup File
+	tpl				Document Template
+	jd
+
+XML Document
+	xml
+	xsl				XML Style Sheet
+	xslt			XSL Transformation File
+	xsd				XML Schema Definition
+	dtd				Document Type Definition File
+	rss				Rich Site Summary
+	svg				Scalable Vector Graphics File
+	xul				XML User Interface Language File
+	axl
+	rdf				Resource Description Framework File
+	xaml			WPF Extensible Application Markup Language
+	resx			ResX Schema
+	plist			Property List
+	pom				Maven POM
+	mm				FreeMind Mind Map
+	xrc				wxWidgets XML Resource
+	fbp				wxFormBuilder Project
+	wxml			WeChat Mini Program
+
+	web.config		ASP.NET Web Configuration
+
+
+ABAQUS
+	inp
+
+ActionScript
+	as
+
+ANSI Art
+	nfo				System Information File
+	diz				Description in Zip File
+
+ANSYS APDL
+	cdb
+
+Assembler Source
+	asm
+	s
+	sx
+	inc
+	cod				Visual C++ assembler output machine code
+	a51				Keil A51
+
+Asymptote Code
+	asy
+
+AutoHotkey Script
+	ahk
+
+	ia
+	scriptlet
+
+AutoIt3 Script
+	au3
+
+AviSynth Script
+	avs
+	avsi
+
+Awk Script
+	awk
+
+
+Batch File
+	bat
+	cmd
+
+blockdiag
+	diag
+
+
+Cangjie Source
+	cj
+
+CIL Assembly
+	il
+
+CMake Script
+	cmake
+	ctest
+
+	CMakeLists.txt
+	CMakeCache.txt
+	*.cmake.in
+	*.ctest.in
+
+CoffeeScript
+	coffee
+	cjsx			CoffeeScript with JSX
+	cson			https://github.com/bevry/cson
+
+	Cakefile
+
+Config File
+	conf
+	cfg
+	cnf
+	htaccess		Apache httpd
+	properties
+	prefs
+	iface			Scintilla
+	prop
+	po				gettext po
+	te				SELinux Policy
+
+	my*.ini			MySQL Configuration
+	my*.cnf			MySQL Configuration
+	Kconfig			Linux Kernel Build Configuration
+	Doxyfile		Doxygen Configuration
+	.*				dot-file
+
+CSV File
+	csv
+	tsv
+
+
+D Source
+	d
+	di				D Interface File
+	dd				Ddoc Source File
+
+Dart Source
+	dart
+
+Diff File
+	diff
+	patch
+	rej				Rejected Patch
+
+
+Erlang Source
+		erl
+		hrl			Header File, https://www.erlang.org/doc/system/records_macros.html#header-files
+		yrl			YECC parser grammar, https://www.erlang.org/docs/21/man/yecc
+		Emakefile	https://www.erlang.org/doc/apps/tools/make.html
+
+Elixir Source
+		ex
+		exs			Elixir script
+
+
+Fortran Source
+	f
+	for				https://gcc.gnu.org/onlinedocs/gfortran/GNU-Fortran-and-GCC.html
+	ftn
+	fpp
+	f90
+	f95
+	f03
+	f08
+	f18
+	f77
+	f2k
+	hf
+	cuf				CUDA Fortran, https://github.com/llvm/llvm-project/blob/main/flang/lib/Frontend/FrontendOptions.cpp
+
+F# Source
+	fs
+	fsi				F# Signature File
+	fsx				F# Script File
+	fsscript		F# Script
+	fsl
+	fsy
+
+
+GN Build Script
+	gn
+	gni
+
+Go Source
+	go
+	gop				Go+, https://github.com/goplus/gop
+	ql				Q Language, https://github.com/c4pt0r/qlang
+
+Gradle Build Script
+	gradle
+
+GraphViz Dot
+	dot
+	gv
+
+Groovy Script
+	groovy
+	gvy
+	gy
+	gsh				Groovy Shell
+	gpp				Groovy Parallel Pattern
+	grunit			GrUnit
+
+
+Haskell Source
+	hs
+	lhs				Literate Haskell
+
+Haxe Script
+	hx
+
+
+Ini Config File
+	ini
+	inf
+	reg
+	oem
+	sif
+	url
+	sed
+	theme
+	clw
+	abnf			ABNF, https://www.ietf.org/rfc/rfc5234.txt
+
+	[x] LLVMBuild.txt
+
+Inno Setup Script
+	iss
+	isl
+	islu
+
+
+Jamfile
+	jam
+
+	Jamroot
+	Jamfile
+
+Julia Script
+	jl
+
+
+Kotlin
+	kt
+	kts				Kotlin Script
+
+LaTeX File
+	tex
+	latex
+	sty				LaTeX Macro package
+	cls				LaTeX Document Class File
+	tpx				drawing tool for TeX，https://github.com/krystophny/tpx
+	bbl				Bibliography
+	bib				Bibliography
+	bst				Bibliography Style
+	ltx
+	dtx				Documented TeX
+	ins				Installer file for dtx
+	info
+	isty				makeindex
+	fd				Font description file
+	rd				R documentation, https://cran.r-project.org/doc/manuals/R-exts.html#Writing-R-documentation-files
+
+	Output files:
+	aux				Auxiliary information
+	toc				Table of Contents
+	lof				list of figures
+	lot				list of tables
+	idx				makeindex
+	ind				processed .idx file
+
+Lisp Script
+	lisp
+	el				Emacs Lisp
+	lsp
+	clj				Common Lisp, ClojureScript
+	cljs			Common Lisp
+	scm				Scheme
+
+LLVM IR
+	ll
+
+Lua Script
+	lua
+	wlua
+	nse				https://nmap.org
+	luadoc
+	luax
+
+
+Makefile
+	mak
+	make
+	mk
+	dsp				VC6
+	dsw				VC6
+	am				automake / autoconf
+	pro				Qt Creator / qmake
+	pri				Qt Creator / qmake
+	gmk				GNU make
+	ninja			Ninja
+
+	Makefile*
+	Kbuild*			Linux Kernel Build
+
+Markdown
+	md
+	markdown
+	mdown
+	mkdn
+	mkd
+
+	litcoffee		Literate CoffeeScript
+	Rmd				R Markdown, https://rmarkdown.rstudio.com/
+	jmd				Julia Markdown, https://docs.julialang.org/en/v1/stdlib/Markdown/
+
+Mathematica
+	m				Module
+	nb				Notebook
+	wl				WolframScript
+	wls				WolframScript
+
+MATLAB Code
+	m				MATLAB / Octave
+	sce				Scilab
+	sci				Scilab
+
+MLIR
+	mlir
+	cir				ClangIR
+	fir				Fortran IR
+	sil				Swift SIL
+
+
+Nim Script
+	nim
+	nimble
+	nims
+	nimrod
+
+Nsis Setup Script
+	nsi				NSIS Script
+	nsh				NSIS Header File
+	nlf				NSIS Language File
+
+
+OCaml Source
+	ml
+	mli
+	mll
+	mly
+	sml				Standard ML
+
+
+Pascal Source
+	pas
+	inc
+	dpr
+	dpk
+	dfm
+	pp
+	lfm
+	lpr
+	fpd
+
+Perl Script
+	pl
+	pm				Perl Module
+	cgi
+	pod				Perl POD File
+	plx				Perl Executable File
+	stp
+
+PowerBuilder Source
+	.pbl library exported source files
+	sra				Application
+	srd				DataWindow
+	srf				Function
+	srj				Project
+	srm				Menu
+	srp				Data Pipeline
+	srq				Query
+	srs				Structure
+	sru				User Object
+	srw				Window
+
+PowerShell Script
+	ps1
+	psc1			PowerShell Console File
+	psd1			PowerShell Data File
+	psm1			PowerShell Script Module File
+
+
+R Code
+	R
+	rsource
+
+	.Rprofile
+	.Rhistory
+	Rprofile.site
+	Renviron.site
+
+Rebol Script
+	r
+	reb
+
+	red			Red
+	reds		Red/System
+
+Resource Script
+	rc
+	rc2
+	rct
+	rh
+	dlg
+
+Rust Source
+	rs
+
+
+SAS File
+	sas
+	sps				https://libguides.library.kent.edu/SAS/syntax
+
+Scala Script
+	scala
+	sbt				Scala Build Tool
+
+Shell Script
+	sh
+	csh				C Shell
+	zsh				Z Shell
+	bash
+	tcsh			C Shell
+
+	m4				M4 Macro
+	in				automake / autoconf
+	ac				Autoconf
+
+	.bash*
+	.profile
+	mozconfig		Firefox Build Configuration
+
+	APKBUILD		Alpine Linux packaging script
+	PKGBUILD		Arch Linux packaging script
+
+Swift Source
+	swift
+
+
+Tcl Script
+	tcl
+	itcl			iWidgets Script
+	tm				Tcl Module
+
+Texinfo File
+	texi
+	texinfo
+	txi
+
+TOML File
+	toml			https://github.com/toml-lang/toml
+
+	Cargo.lock		Rust Cargo
+	.pylintrc		Pylint Configuration File
+
+TypeScript
+	ts
+	tsx		TypeScript with JSX
+	cts		cjs
+	mts		mjs
+	ets		HarmonyOS ArkTS, https://developer.huawei.com/consumer/cn/arkts/
+	osts	Office Scripts, https://learn.microsoft.com/en-us/office/dev/scripts/
+
+Typst File
+	typ
+
+
+VBScript
+	vbs
+	dsm				Visual Studio Macro
+
+Verilog HDL Source
+	v
+	vh
+	sv				SystemVerilog
+	svh				SystemVerilog Header File
+
+VHDL Source
+	vhd
+	vhdl
+
+Vim Script
+	vim
+
+Visual Basic
+	vb
+
+	https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-basic-6/aa241721(v=vs.60)
+	bas				Visual Basic Module
+	frm				Visual Basic Text Form
+	cls				Program Class File
+	ctl				Visual Basic User Control Object File
+	pag				Visual Basic Property Page File
+	dsr				Visual Basic Active Designer File
+	dob				ActiveX Document Form File
+
+
+WebAssembly
+	wat
+	wast
+
+WinHex Script
+	whs
+	tpl				Template Definition
+
+YAML Document
+	yml
+	yaml
+	clang-format	clang-format Configuration File
+	clang-tidy		clang-tidy Configuration File
+	clangd			clangd Configuration File
+	mir				LLVM Machine IR, https://llvm.org/docs/MIRLangRef.html
+	apinotes		Swift API Notes
+	ifs				LLVM IFS (Interface Stubs)
+	gyp				GYP
+	gypi			GYP
+	cff				Citation File Format, https://citation-file-format.github.io/
+	winget			WinGet Configuration file, https://learn.microsoft.com/en-us/windows/package-manager/configuration/create
+
+Zig Source
+	zig
+
+https://en.wikipedia.org/wiki/List_of_filename_extensions
+https://fileinfo.com/
+https://www.file-extensions.org/

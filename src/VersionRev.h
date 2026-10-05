@@ -1,0 +1,6 @@
+#define VERSION_MINOR 1
+#define VERSION_BUILD_NUM 0
+#define VERSION_BUILD 0
+#define VERSION_HASH TEXT("b6c0724d")
+#define VERSION_REV 0
+#define VERSION_REV_FULL TEXT("1.0.0 (b6c0724d)")

@@ -1,0 +1,401 @@
+// This file is part of Notepad4.
+// See License.txt for details about distribution and modification.
+
+#include <cstdint>
+#include <cassert>
+#include <cstring>
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "ILexer.h"
+#include "Scintilla.h"
+
+#include "LexAccessor.h"
+#include "CharacterSet.h"
+#include "LexerUtils.h"
+
+using namespace Lexilla;
+
+namespace Lexilla {
+
+bool LexAccessor::MatchIgnoreCase(Sci_Position pos, const char *s) noexcept {
+	for (; *s; s++, pos++) {
+		if (*s != MakeLowerCase((*this)[pos])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool LexAccessor::MatchLowerCase(Sci_Position pos, const char *s) noexcept {
+	for (; *s; s++, pos++) {
+		if (*s != UnsafeLower((*this)[pos])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void LexAccessor::GetRange(Sci_PositionU startPos_, Sci_PositionU endPos_, char *s, Sci_PositionU len) const noexcept {
+	assert(s != nullptr);
+	assert(startPos_ <= endPos_ && len != 0);
+	//memset(s, 0, len);
+	endPos_ = sci::min(endPos_, startPos_ + len - 1);
+	//endPos_ = sci::min(endPos_, static_cast<Sci_PositionU>(lenDoc));
+	len = endPos_ - startPos_;
+	if (startPos_ >= static_cast<Sci_PositionU>(startPos) && endPos_ <= static_cast<Sci_PositionU>(endPos)) {
+		const char * const p = buf + (startPos_ - startPos);
+		memcpy(s, p, len);
+	} else {
+		pAccess->GetCharRange(s, startPos_, len);
+	}
+	s[len] = '\0';
+}
+
+void LexAccessor::GetRangeLowered(Sci_PositionU startPos_, Sci_PositionU endPos_, char *s, Sci_PositionU len) const noexcept {
+	GetRange(startPos_, endPos_, s, len);
+	ToLowerCase(s);
+}
+
+void LexAccessor::GetRange(Sci_PositionU startPos_, Sci_PositionU endPos_, std::string &s) const {
+	assert(startPos_ <= endPos_);
+	//endPos_ = sci::min(endPos_, static_cast<Sci_PositionU>(lenDoc));
+	const Sci_PositionU len = endPos_ - startPos_;
+	s.resize(len, '\0');
+	GetRange(startPos_, endPos_, s.data(), len + 1);
+}
+
+void LexAccessor::GetRangeLowered(Sci_PositionU startPos_, Sci_PositionU endPos_, std::string &s) const {
+	assert(startPos_ <= endPos_);
+	//endPos_ = sci::min(endPos_, static_cast<Sci_PositionU>(lenDoc));
+	const Sci_PositionU len = endPos_ - startPos_;
+	s.resize(len, '\0');
+	GetRangeLowered(startPos_, endPos_, s.data(), len + 1);
+}
+
+Sci_Position LexLineSkipSpaceTab(LexAccessor &styler, Sci_Line line) noexcept {
+	Sci_Position startPos = styler.LineStart(line);
+	const Sci_Position endPos = styler.LineStart(line + 1) - 1;
+	for (; startPos < endPos; startPos++) {
+		if (!IsSpaceOrTab(styler[startPos])) {
+			break;
+		}
+	}
+	return startPos;
+}
+
+bool IsLexSpaceToEOL(LexAccessor &styler, Sci_Position startPos) noexcept {
+	const Sci_Line line = styler.GetLine(startPos);
+	const Sci_Position endPos = styler.LineStart(line + 1) - 1;
+	for (; startPos < endPos; startPos++) {
+		const char ch = styler[startPos];
+		if (!IsSpaceOrTab(ch)) {
+			return IsEOLChar(ch);
+		}
+	}
+	return true;
+}
+
+bool IsLexEmptyLine(LexAccessor &styler, Sci_Line line) noexcept {
+	Sci_Position startPos = styler.LineStart(line);
+	const Sci_Position endPos = styler.LineStart(line + 1) - 1;
+	for (; startPos < endPos; startPos++) {
+		const char ch = styler[startPos];
+		if (!IsSpaceOrTab(ch)) {
+			return IsEOLChar(ch);
+		}
+	}
+	return true;
+}
+
+bool IsLexLineStartsWith(LexAccessor &styler, Sci_Line line, const char *word, bool matchCase, int style) noexcept {
+	Sci_Position startPos = styler.LineStart(line);
+	const Sci_Position endPos = styler.LineStart(line + 1) - 1;
+	for (; startPos < endPos; startPos++) {
+		if (!IsSpaceOrTab(styler[startPos])) {
+			return styler.StyleAt(startPos) == style &&
+			(matchCase ? styler.Match(startPos, word) : styler.MatchIgnoreCase(startPos, word));
+		}
+	}
+	return false;
+}
+
+bool IsLexCommentLine(LexAccessor &styler, Sci_Line line, int style) noexcept {
+	Sci_Position startPos = styler.LineStart(line);
+	const Sci_Position endPos = styler.LineStart(line + 1) - 1;
+	for (; startPos < endPos; startPos++) {
+		if (!IsSpaceOrTab(styler[startPos])) {
+			const int stl = styler.StyleAt(startPos);
+			//char ch = styler[startPos];
+			if (stl == 0 && stl != style) {
+				return false;
+			}
+			while (style != 0 && stl != (style & 0xFF)) {
+				style >>= 8;
+			}
+			return style != 0;
+		}
+	}
+	return false;
+}
+
+Sci_Position LexSkipWhiteSpace(LexAccessor &styler, Sci_Position startPos, Sci_Position endPos) noexcept {
+	for (; startPos < endPos; startPos++) {
+		if (!IsWhiteSpace(styler[startPos])) {
+			break;
+		}
+	}
+	return startPos;
+}
+
+Sci_Position LexSkipWhiteSpace(LexAccessor &styler, Sci_Position startPos, Sci_Position endPos, bool IsStreamCommentStyle(int) noexcept) noexcept {
+	for (; startPos < endPos; startPos++) {
+		if (!(IsWhiteSpace(styler[startPos]) || IsStreamCommentStyle(styler.StyleAt(startPos)))) {
+			break;
+		}
+	}
+	return startPos;
+}
+
+Sci_Position LexSkipWhiteSpace(LexAccessor &styler, Sci_Position startPos, Sci_Position endPos,
+	bool IsStreamCommentStyle(int), const CharacterSet &charSet) noexcept {
+	for (; startPos < endPos; startPos++) {
+		const char ch = styler[startPos];
+		if (!(IsWhiteSpace(ch) || charSet.Contains(ch) || IsStreamCommentStyle(styler.StyleAt(startPos)))) {
+			break;
+		}
+	}
+	return startPos;
+}
+
+Sci_PositionU LexGetRange(LexAccessor &styler, Sci_Position startPos, bool IsWordChar(int) noexcept, char *s, Sci_PositionU len) noexcept {
+	Sci_PositionU i = 0;
+	char ch = styler[startPos];
+	while ((i < len - 1) && IsWordChar(static_cast<unsigned char>(ch))) {
+		s[i] = ch;
+		i++;
+		startPos++;
+		ch = styler[startPos];
+	}
+	s[i] = '\0';
+	return i;
+}
+
+Sci_PositionU LexGetRangeLowered(LexAccessor &styler, Sci_Position startPos, bool IsWordChar(int) noexcept, char *s, Sci_PositionU len) noexcept {
+	Sci_PositionU i = 0;
+	char ch = MakeLowerCase(styler[startPos]);
+	while ((i < len - 1) && IsWordChar(static_cast<unsigned char>(ch))) {
+		s[i] = ch;
+		i++;
+		startPos++;
+		ch = MakeLowerCase(styler[startPos]);
+	}
+	s[i] = '\0';
+	return i;
+}
+
+Sci_PositionU LexGetRange(LexAccessor &styler, Sci_Position startPos, const CharacterSet &charSet, char *s, Sci_PositionU len) noexcept {
+	Sci_PositionU i = 0;
+	char ch = styler[startPos];
+	while ((i < len - 1) && charSet.Contains(ch)) {
+		s[i] = ch;
+		i++;
+		startPos++;
+		ch = styler[startPos];
+	}
+	s[i] = '\0';
+	return i;
+}
+
+Sci_PositionU LexGetRangeLowered(LexAccessor &styler, Sci_Position startPos, const CharacterSet &charSet, char *s, Sci_PositionU len) noexcept {
+	Sci_PositionU i = 0;
+	char ch = MakeLowerCase(styler[startPos]);
+	while ((i < len - 1) && charSet.Contains(ch)) {
+		s[i] = ch;
+		i++;
+		startPos++;
+		ch = MakeLowerCase(styler[startPos]);
+	}
+	s[i] = '\0';
+	return i;
+}
+
+int PackLineState(const std::vector<int>& states) noexcept {
+	return PackLineState<DefaultNestedStateValueBit, DefaultMaxNestedStateCount, DefaultNestedStateCountBit, DefaultNestedStateBaseStyle>(states);
+}
+
+void UnpackLineState(int lineState, std::vector<int>& states) {
+	UnpackLineState<DefaultNestedStateValueBit, DefaultMaxNestedStateCount, DefaultNestedStateCountBit, DefaultNestedStateBaseStyle>(lineState, states);
+}
+
+SCI_noinline
+void BacktrackToStart(const LexAccessor &styler, int stateMask, Sci_PositionU &startPos, Sci_Position &lengthDoc, int &initStyle) noexcept {
+	const Sci_Line currentLine = styler.GetLine(startPos);
+	if (currentLine != 0) {
+		Sci_Line line = currentLine;
+		if (stateMask < 0) { // always backtrack one line
+			const uint8_t empty = (static_cast<uint32_t>(stateMask) >> 8) & 0xff;
+			stateMask &= 0xff;
+			line -= 1;
+			// fix backtrack for LineStateBlockEndLine, skip previous empty line
+			if (line != 0) {
+				const int lineState = styler.GetLineState(line);
+				// printf("  lineState[%zd]: %d / %d, mask: %d / %d\n", line, lineState, styler.GetLineState(line - 1), stateMask, empty);
+				if ((lineState & empty) != 0) {
+					line -= 1;
+				}
+			}
+		}
+		while (line != 0) {
+			const Sci_Line prev = line - 1;
+			const int lineState = styler.GetLineState(prev);
+			if ((lineState & stateMask) != 0) {
+				line = prev;
+			} else {
+				break;
+			}
+		}
+		// printf("  backtrack: %zd => %zd, lineState: %d / %d, %d\n", currentLine, line, styler.GetLineState(line), styler.GetLineState(line - 1), stateMask);
+		if (line != currentLine) {
+			const Sci_PositionU endPos = startPos + lengthDoc;
+			if (line == 0) {
+				startPos = 0;
+				initStyle = 0;
+			} else {
+				startPos = styler.LineStart(line);
+				initStyle = styler.StyleIndexAt(startPos - 1);
+			}
+			lengthDoc = endPos - startPos;
+		}
+	}
+}
+
+Sci_PositionU LookbackNonWhite(LexAccessor &styler, Sci_PositionU startPos, unsigned maxSpaceStyle, int &chPrevNonWhite, int &stylePrevNonWhite) noexcept {
+	const unsigned startStyle = maxSpaceStyle >> 8;
+	maxSpaceStyle &= 0xff;
+	do {
+		--startPos;
+		const unsigned style = styler.StyleIndexAt(startPos);
+		if (style > maxSpaceStyle) {
+			stylePrevNonWhite = style;
+			chPrevNonWhite = static_cast<unsigned char>(styler[startPos]);
+			break;
+		}
+		if (style < startStyle) {
+			break;
+		}
+	} while (startPos != 0);
+	return startPos;
+}
+
+SCI_noinline
+Sci_PositionU CheckBraceOnNextLine(LexAccessor &styler, Sci_Line line, int operatorStyle, int maxSpaceStyle, int ignoreStyle) noexcept {
+	// check brace on next line
+	Sci_Position startPos = styler.LineStart(line + 1);
+	Sci_Position bracePos = startPos;
+	char ch;
+	while (IsASpaceOrTab(ch = styler[bracePos])) {
+		++bracePos;
+	}
+	if (ch != '{') {
+		return 0;
+	}
+
+	int style = styler.StyleIndexAt(bracePos);
+	if (style != operatorStyle) {
+		return 0;
+	}
+
+	// check current line
+	Sci_Position endPos = startPos - 1;
+	startPos = styler.LineStart(line);
+
+	// ignore current line, e.g. current line is preprocessor.
+	if (ignoreStyle) {
+		while (startPos < endPos) {
+			style = styler.StyleIndexAt(startPos);
+			if (style > maxSpaceStyle) {
+				break;
+			}
+			++startPos;
+		}
+		if (style == ignoreStyle) {
+			return 0;
+		}
+	}
+
+	while (endPos >= startPos) {
+		style = styler.StyleIndexAt(endPos);
+		if (style > maxSpaceStyle) {
+			break;
+		}
+		--endPos;
+	}
+	if (endPos < startPos) {
+		// current line is empty or comment
+		return 0;
+	}
+	if (style == operatorStyle) {
+		ch = styler[endPos];
+		/*
+		function(param)
+			{ body }
+
+		if (expr)
+			{ body }
+		else
+			{ body }
+
+		switch (expr)
+			{ body }
+
+		class name<T>
+			{ body }
+
+		var name =
+			{ body }
+		var name = new type[]
+			{ body }
+
+		case constant:
+			{ body }
+
+		ActionScript:
+			function name(param:*):*
+				{ body }
+		C++:
+			[lambda-capture]
+				{ body }
+		C#:
+			=> { lambda }
+		Java:
+			-> { lambda }
+		Objective-C:
+			^{ block }
+		Rust:
+			fn name() -> optional?
+				{ body }
+		Scala:
+			class name[T]
+				{ body }
+		*/
+		if (!AnyOf(ch, ')', '>', '=', ':', ']', '^', '?', '*')) {
+			return 0;
+		}
+	}
+
+	/*
+		class name
+			{ body }
+
+		try
+			{ body }
+		catch (exception)
+			{ body }
+	*/
+	return bracePos;
+}
+
+}

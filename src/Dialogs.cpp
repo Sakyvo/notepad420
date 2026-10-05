@@ -1,0 +1,2783 @@
+/******************************************************************************
+*
+*
+* Notepad4
+*
+* Dialogs.cpp
+*   Notepad4 dialog boxes implementation
+*
+* See Readme.txt for more information about this source code.
+* Please send me your comments to this work.
+*
+* See License.txt for details about distribution and modification.
+*
+*                                              (c) Florian Balmer 1996-2011
+*                                                  florian.balmer@gmail.com
+*                                              https://www.flos-freeware.ch
+*
+*
+******************************************************************************/
+
+#include <windows.h>
+#include <windowsx.h>
+#include <shlwapi.h>
+#include <shlobj.h>
+#include <shellapi.h>
+#include <commctrl.h>
+#include <commdlg.h>
+#include <uxtheme.h>
+#include "config.h"
+#include "SciCall.h"
+#include "Helpers.h"
+#include "DarkMode.h"
+#include "Notepad4.h"
+#include "Edit.h"
+#include "Styles.h"
+#include "Dlapi.h"
+#include "Dialogs.h"
+#include "resource.h"
+#include "Version.h"
+
+extern HWND		hwndMain;
+extern DWORD	dwLastIOError;
+extern int		iDefaultEncoding;
+extern int		iCurrentEncoding;
+extern bool		bSkipUnicodeDetection;
+extern bool		bLoadANSIasUTF8;
+extern bool		bLoadASCIIasUTF8;
+extern bool		bLoadNFOasOEM;
+extern bool		fNoFileVariables;
+extern bool		bNoEncodingTags;
+extern int		iDefaultEOLMode;
+extern bool		bWarnLineEndings;
+extern bool		bFixLineEndings;
+extern bool		bAutoStripBlanks;
+#if NP2_ENABLE_APP_LOCALIZATION_DLL
+extern LANGID uiLanguage;
+#endif
+extern int iWrapColumn;
+
+static inline HWND GetMsgBoxParent() noexcept {
+	HWND hwnd = GetActiveWindow();
+	return (hwnd == nullptr) ? hwndMain : hwnd;
+}
+
+//=============================================================================
+//
+// MsgBox()
+//
+int MsgBox(UINT uType, UINT uIdMsg, ...) noexcept {
+	WCHAR szBuf[1024];
+	WCHAR szText[1024];
+
+	GetString(uIdMsg, szBuf, COUNTOF(szBuf));
+
+	va_list va;
+	va_start(va, uIdMsg);
+	wvsprintf(szText, szBuf, va);
+	va_end(va);
+
+#if NP2_ENABLE_APP_LOCALIZATION_DLL
+	const LANGID lang = uiLanguage;
+#else
+	constexpr LANGID lang = LANG_USER_DEFAULT;
+#endif
+
+	if (uType & MB_SERVICE_NOTIFICATION) {
+		uType &= ~MB_SERVICE_NOTIFICATION;
+		LPWSTR lpMsgBuf;
+		FormatMessage(
+			FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+			nullptr,
+			dwLastIOError,
+			lang,
+			reinterpret_cast<LPWSTR>(&lpMsgBuf),
+			0,
+			nullptr);
+		StrTrim(lpMsgBuf, L" \a\b\f\n\r\t\v");
+		StrCatBuff(szText, L"\r\n", COUNTOF(szText));
+		StrCatBuff(szText, lpMsgBuf, COUNTOF(szText));
+		LocalFree(lpMsgBuf);
+		const WCHAR wcht = szText[lstrlen(szText) - 1];
+		if (IsCharAlphaNumeric(wcht) || wcht == L'"' || wcht == L'\'') {
+			StrCatBuff(szText, L".", COUNTOF(szText));
+		}
+	}
+
+	WCHAR szTitle[128];
+	GetString(IDS_APPTITLE, szTitle, COUNTOF(szTitle));
+
+	uType |= MB_SETFOREGROUND;
+	if (bWindowLayoutRTL) {
+		uType |= MB_RTLREADING;
+	}
+
+	HWND hwnd = GetMsgBoxParent();
+	DialogHook_Start(DialogRefData_MessageBox);
+	const int result = MessageBoxEx(hwnd, szText, szTitle, uType, lang);
+	DialogHook_Stop();
+	return result;
+}
+
+//=============================================================================
+//
+// DisplayCmdLineHelp()
+//
+void DisplayCmdLineHelp(HWND hwnd) noexcept {
+	WCHAR szTitle[32];
+	WCHAR szText[2048];
+
+	GetString(IDS_APPTITLE, szTitle, COUNTOF(szTitle));
+	GetString(IDS_CMDLINEHELP, szText, COUNTOF(szText));
+
+	MSGBOXPARAMS mbp;
+	mbp.cbSize = sizeof(MSGBOXPARAMS);
+	mbp.hwndOwner = hwnd;
+	mbp.hInstance = g_hInstance;
+	mbp.lpszText = szText;
+	mbp.lpszCaption = szTitle;
+	mbp.dwStyle = MB_OK | MB_USERICON | MB_SETFOREGROUND;
+	mbp.lpszIcon = MAKEINTRESOURCE(IDR_MAINWND);
+	mbp.dwContextHelpId = 0;
+	mbp.lpfnMsgBoxCallback = nullptr;
+#if NP2_ENABLE_APP_LOCALIZATION_DLL
+	mbp.dwLanguageId = uiLanguage;
+#else
+	mbp.dwLanguageId = LANG_USER_DEFAULT;
+#endif
+	if (bWindowLayoutRTL) {
+		mbp.dwStyle |= MB_RTLREADING;
+	}
+
+	if (hwnd != nullptr) {
+		DialogHook_Start(DialogRefData_MessageBox);
+	}
+	MessageBoxIndirect(&mbp);
+	DialogHook_Stop();
+}
+
+void OpenHelpLink(HWND hwnd, int cmd) noexcept {
+	LPCWSTR link = nullptr;
+	switch (cmd) {
+	case IDC_WEBPAGE_LINK:
+		link = L"https://www.flos-freeware.ch";
+		break;
+	case IDC_EMAIL_LINK:
+		link = L"mailto:florian.balmer@gmail.com";
+		break;
+	case IDC_MOD_PAGE_LINK:
+		link = VERSION_MODPAGE_DISPLAY;
+		break;
+	case IDC_SCI_PAGE_LINK:
+		link = VERSION_SCIPAGE_DISPLAY;
+		break;
+	case IDC_NEW_PAGE_LINK:
+	case IDM_HELP_PROJECT_HOME:
+		link = VERSION_NEWPAGE_DISPLAY;
+		break;
+	case IDM_HELP_LATEST_RELEASE:
+		link = HELP_LINK_LATEST_RELEASE;
+		break;
+	case IDM_HELP_LATEST_BUILD:
+		link = HELP_LINK_LATEST_BUILD;
+		break;
+	case IDM_HELP_REPORT_ISSUE:
+		link = HELP_LINK_REPORT_ISSUE;
+		break;
+	case IDM_HELP_FEATURE_REQUEST:
+		link = HELP_LINK_FEATURE_REQUEST;
+		break;
+	case IDM_HELP_ONLINE_WIKI:
+		link = HELP_LINK_ONLINE_WIKI;
+		break;
+	}
+
+	if (StrNotEmpty(link)) {
+		ShellExecute(hwnd, L"open", link, nullptr, nullptr, SW_SHOWNORMAL);
+	}
+}
+
+static inline LPCWSTR GetProcessorArchitecture() noexcept {
+	SYSTEM_INFO info;
+	GetNativeSystemInfo(&info);
+#ifndef PROCESSOR_ARCHITECTURE_ARM64
+#define PROCESSOR_ARCHITECTURE_ARM64	12
+#endif
+	switch (info.wProcessorArchitecture) {
+	case PROCESSOR_ARCHITECTURE_AMD64:
+		return L"x64";
+	case PROCESSOR_ARCHITECTURE_ARM:
+		return L"ARM";
+	case PROCESSOR_ARCHITECTURE_ARM64:
+		return L"ARM64";
+	case PROCESSOR_ARCHITECTURE_IA64:
+		return L"IA64";
+	case PROCESSOR_ARCHITECTURE_INTEL:
+		return L"x86";
+	default:
+		return L"Unknown";
+	}
+}
+
+//=============================================================================
+//
+// GetDirectory()
+//
+bool GetDirectory(HWND hwndParent, int iTitle, LPWSTR pszFolder, LPCWSTR pszBase) {
+	WCHAR szBase[MAX_PATH];
+	if (StrIsEmpty(pszBase)) {
+		pszBase = szBase;
+		GetCurrentDirectory(MAX_PATH, szBase);
+	}
+
+	FileDialog dialog {nullptr, 0, 0, FileDialogType_FileOpen, FileDialog_BrowseFolder, nullptr, };
+	if (LPWSTR pszPath = dialog.Show(hwndParent, pszBase, nullptr, iTitle)) {
+		lstrcpy(pszFolder, pszPath);
+		CoTaskMemFree(pszPath);
+		return true;
+	}
+
+	return false;
+}
+
+//=============================================================================
+//
+// AboutDlgProc()
+//
+INT_PTR CALLBACK AboutDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		WCHAR wch[128];
+#if defined(VERSION_BUILD_TOOL_BUILD)
+		wsprintf(wch, VERSION_BUILD_INFO_FORMAT, VERSION_BUILD_TOOL_NAME,
+			VERSION_BUILD_TOOL_MAJOR, VERSION_BUILD_TOOL_MINOR, VERSION_BUILD_TOOL_PATCH, VERSION_BUILD_TOOL_BUILD);
+#else
+		wsprintf(wch, VERSION_BUILD_INFO_FORMAT, VERSION_BUILD_TOOL_NAME,
+			VERSION_BUILD_TOOL_MAJOR, VERSION_BUILD_TOOL_MINOR, VERSION_BUILD_TOOL_PATCH);
+#endif
+
+		SetDlgItemText(hwnd, IDC_VERSION, VERSION_FILEVERSION_LONG);
+		SetDlgItemText(hwnd, IDC_BUILD_INFO, wch);
+
+		HFONT hFontTitle = GetWindowFont(hwnd);
+		LOGFONT lf;
+		GetObject(hFontTitle, sizeof(LOGFONT), &lf);
+		lf.lfWeight = FW_BOLD;
+		hFontTitle = CreateFontIndirect(&lf);
+		SendDlgItemMessage(hwnd, IDC_VERSION, WM_SETFONT, AsInteger<WPARAM>(hFontTitle), TRUE);
+		SetWindowLongPtr(hwnd, DWLP_USER, AsInteger<LONG_PTR>(hFontTitle));
+
+		wsprintf(wch, L"<A>%s</A>", VERSION_WEBPAGE_DISPLAY);
+		SetDlgItemText(hwnd, IDC_WEBPAGE_LINK, wch);
+		wsprintf(wch, L"<A>%s</A>", VERSION_EMAIL_DISPLAY);
+		SetDlgItemText(hwnd, IDC_EMAIL_LINK, wch);
+		wsprintf(wch, L"<A>%s</A>", VERSION_MODPAGE_DISPLAY);
+		SetDlgItemText(hwnd, IDC_MOD_PAGE_LINK, wch);
+		wsprintf(wch, L"<A>%s</A>", VERSION_NEWPAGE_DISPLAY);
+		SetDlgItemText(hwnd, IDC_NEW_PAGE_LINK, wch);
+		wsprintf(wch, L"<A>%s</A>", VERSION_SCIPAGE_DISPLAY);
+		SetDlgItemText(hwnd, IDC_SCI_PAGE_LINK, wch);
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_NOTIFY: {
+		LPNMHDR pnmhdr = AsPointer<LPNMHDR>(lParam);
+		switch (pnmhdr->code) {
+		case NM_CLICK:
+		case NM_RETURN:
+			OpenHelpLink(hwnd, static_cast<int>(pnmhdr->idFrom));
+			break;
+		}
+	}
+	break;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+		case IDCANCEL:
+		case IDC_COPY_BUILD_INFO:
+			if (LOWORD(wParam) == IDC_COPY_BUILD_INFO) {
+				OSVERSIONINFOW version;
+				memset(&version, 0, sizeof(version));
+				version.dwOSVersionInfoSize = sizeof(version);
+				NP2_COMPILER_WARNING_PUSH
+				NP2_IGNORE_WARNING_DEPRECATED_DECLARATIONS
+				GetVersionEx(&version);
+				NP2_COMPILER_WARNING_POP
+
+				WCHAR wch[128];
+				WCHAR tch[512];
+				LPCWSTR arch = GetProcessorArchitecture();
+				const int iEncoding = Encoding_GetIndex(mEncoding[CPI_DEFAULT].uCodePage);
+				LPCWSTR defaultEncoding = Encoding_GetLabel(iEncoding);
+				LPCWSTR currentEncoding = Encoding_GetLabel(iCurrentEncoding);
+				GetDlgItemText(hwnd, IDC_BUILD_INFO, wch, COUNTOF(wch));
+				wsprintf(tch, L"%s\n%s\nEncoding: %s, %s\nScheme: %s, %s\nSystem: %u.%u.%u %s %s\n",
+					VERSION_FILEVERSION_LONG, wch,
+					currentEncoding, defaultEncoding,
+					PathFindExtension(szCurFile), pLexCurrent->pszName,
+					version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber,
+					version.szCSDVersion, arch);
+				SetClipData(hwnd, tch);
+			}
+			EndDialog(hwnd, IDOK);
+			break;
+		}
+		return TRUE;
+
+	case WM_DESTROY: {
+		HFONT hFontTitle = AsPointer<HFONT>(GetWindowLongPtr(hwnd, DWLP_USER));
+		DeleteObject(hFontTitle);
+	}
+	return FALSE;
+	}
+	return FALSE;
+}
+
+//=============================================================================
+//
+// RunDlgProc()
+//
+static INT_PTR CALLBACK RunDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP3),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_RUNDESC) | RESIZE_INVALIDATE_RECT,
+		DeferCtlMoveX(IDC_SEARCHEXE),
+		DeferCtlSizeX(IDC_COMMANDLINE),
+	};
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		ResizeDlg_InitX(hwnd, &positionRecord.cxRunDlg, controlDefinition, COUNTOF(controlDefinition));
+		MakeBitmapButton(hwnd, IDC_SEARCHEXE, g_exeInstance, IDB_OPEN_FOLDER16);
+
+		HWND hwndCtl = GetDlgItem(hwnd, IDC_COMMANDLINE);
+		Edit_LimitText(hwndCtl, MAX_PATH - 1);
+		Edit_SetText(hwndCtl, AsPointer<LPCWSTR>(lParam));
+		SHAutoComplete(hwndCtl, SHACF_FILESYSTEM);
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_DESTROY:
+		DeleteBitmapButton(hwnd, IDC_SEARCHEXE);
+		return FALSE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDC_SEARCHEXE: {
+			WCHAR szArgs[MAX_PATH];
+			WCHAR szArg2[MAX_PATH];
+			WCHAR szFile[MAX_PATH];
+
+			GetDlgItemText(hwnd, IDC_COMMANDLINE, szArgs, COUNTOF(szArgs));
+			ExtractFirstArgument(szArgs, szFile, szArg2);
+			if (ExpandEnvironmentStringsEx(szFile, szArgs)) {
+				lstrcpy(szFile, szArgs);
+			}
+			if (ExpandEnvironmentStringsEx(szArg2, szArgs)) {
+				lstrcpy(szArg2, szArgs);
+			}
+
+			FileDialog dialog {nullptr, IDS_FILTER_EXE, 0, FileDialogType_OpenParseFilter, FileDialog_FindFile, nullptr};
+			if (LPWSTR pszPath = dialog.Show(hwnd, nullptr, szFile)) {
+				lstrcpy(szFile, pszPath);
+				CoTaskMemFree(pszPath);
+				PathQuoteSpaces(szFile);
+				if (StrNotEmpty(szArg2)) {
+					lstrcat(szFile, L" ");
+					lstrcat(szFile, szArg2);
+				}
+				SetDlgItemText(hwnd, IDC_COMMANDLINE, szFile);
+			}
+
+			PostMessage(hwnd, WM_NEXTDLGCTL, TRUE, FALSE);
+		}
+		break;
+
+		case IDC_COMMANDLINE: {
+			bool bEnableOK = false;
+			WCHAR args[MAX_PATH];
+
+			if (GetDlgItemText(hwnd, IDC_COMMANDLINE, args, MAX_PATH)) {
+				if (ExtractFirstArgument(args, args, nullptr)) {
+					if (StrNotEmpty(args)) {
+						bEnableOK = true;
+					}
+				}
+			}
+
+			EnableWindow(GetDlgItem(hwnd, IDOK), bEnableOK);
+		}
+		break;
+
+		case IDOK: {
+			WCHAR arg1[MAX_PATH];
+			if (GetDlgItemText(hwnd, IDC_COMMANDLINE, arg1, MAX_PATH)) {
+				bool bQuickExit = false;
+				WCHAR arg2[MAX_PATH];
+				WCHAR wchDirectory[MAX_PATH];
+
+				ExtractFirstArgument(arg1, arg1, arg2);
+				if (ExpandEnvironmentStringsEx(arg2, wchDirectory)) {
+					lstrcpy(arg2, wchDirectory);
+				}
+
+				if (StrCaseEqual(arg1, MY_APPNAME) || StrCaseEqual(arg1, MY_APPNAME L".exe")) {
+					GetModuleFileName(nullptr, arg1, COUNTOF(arg1));
+					bQuickExit = true;
+				}
+
+				SetStrEmpty(wchDirectory);
+				if (StrNotEmpty(szCurFile)) {
+					lstrcpy(wchDirectory, szCurFile);
+					PathRemoveFileSpec(wchDirectory);
+				}
+
+				SHELLEXECUTEINFO sei;
+				memset(&sei, 0, sizeof(SHELLEXECUTEINFO));
+				sei.cbSize = sizeof(SHELLEXECUTEINFO);
+				sei.fMask = SEE_MASK_DOENVSUBST;
+				sei.hwnd = hwnd;
+				sei.lpVerb = nullptr;
+				sei.lpFile = arg1;
+				sei.lpParameters = arg2;
+				sei.lpDirectory = wchDirectory;
+				sei.nShow = SW_SHOWNORMAL;
+
+				if (bQuickExit) {
+					sei.fMask |= SEE_MASK_NOZONECHECKS;
+					EndDialog(hwnd, IDOK);
+					ShellExecuteEx(&sei);
+				} else {
+					if (ShellExecuteEx(&sei)) {
+						EndDialog(hwnd, IDOK);
+					} else {
+						PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, IDC_COMMANDLINE)), TRUE);
+					}
+				}
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// RunDlg()
+//
+void RunDlg(HWND hwnd, LPCWSTR lpstrDefault) noexcept {
+	ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_RUN), hwnd, RunDlgProc, AsInteger<LPARAM>(lpstrDefault));
+}
+
+//=============================================================================
+//
+// OpenWithDlgProc()
+//
+extern WCHAR tchOpenWithDir[MAX_PATH];
+extern bool flagNoFadeHidden;
+
+namespace {
+
+struct OpenWithDlgParam {
+	LPWSTR lpDirectory;
+	int *cxFrame;
+	int *cyFrame;
+	UINT idsTitle;
+	DirListItem dli;
+};
+
+INT_PTR CALLBACK OpenWithDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
+	static_assert(IDC_OPENWITHDIR == IDC_FAVORITESDIR && IDC_GETOPENWITHDIR == IDC_GETFAVORITESDIR && IDC_OPENWITHDESCR == IDC_FAVORITESDESCR);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP3),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSize(IDC_OPENWITHDIR) | RESIZE_AUTOSIZE_USEHEADER,
+		DeferCtlMoveY(IDC_GETOPENWITHDIR),
+		DeferCtlMoveYSizeX(IDC_OPENWITHDESCR) | RESIZE_INVALIDATE_RECT,
+	};
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+		const auto *param = AsPointer<OpenWithDlgParam *>(lParam);
+		ResizeDlg_Init(hwnd, param->cxFrame, param->cyFrame, controlDefinition, COUNTOF(controlDefinition));
+
+		HWND hwndLV = GetDlgItem(hwnd, IDC_OPENWITHDIR);
+		DarkMode_InitFileListView(hwndLV);
+		DirList_Init(hwndLV);
+		DirList_Fill(hwndLV, param->lpDirectory, DL_ALLOBJECTS, nullptr, false, flagNoFadeHidden, DS_NAME, false);
+		DirList_StartIconThread(hwndLV);
+		ListView_SetItemState(hwndLV, 0, LVIS_FOCUSED, LVIS_FOCUSED);
+
+		MakeBitmapButton(hwnd, IDC_GETOPENWITHDIR, g_exeInstance, IDB_OPEN_FOLDER16);
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_DESTROY:
+		DirList_Destroy(GetDlgItem(hwnd, IDC_OPENWITHDIR));
+		DeleteBitmapButton(hwnd, IDC_GETOPENWITHDIR);
+		return FALSE;
+
+	case WM_NOTIFY: {
+		LPNMHDR pnmh = AsPointer<LPNMHDR>(lParam);
+
+		if (pnmh->idFrom == IDC_OPENWITHDIR) {
+			HWND hwndLV = pnmh->hwndFrom;
+			switch (pnmh->code) {
+			case LVN_GETDISPINFO:
+				DirList_GetDispInfo(hwndLV, lParam);
+				break;
+
+			case LVN_DELETEITEM:
+				DirList_DeleteItem(hwndLV, lParam);
+				break;
+
+			case LVN_ITEMCHANGED: {
+				const NM_LISTVIEW *pnmlv = AsPointer<NM_LISTVIEW *>(lParam);
+				EnableWindow(GetDlgItem(hwnd, IDOK), (pnmlv->uNewState & LVIS_SELECTED));
+			}
+			break;
+
+			case NM_DBLCLK:
+				if (ListView_GetSelectedCount(hwndLV)) {
+					SendWMCommand(hwnd, IDOK);
+				}
+				break;
+			}
+		}
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDC_GETOPENWITHDIR: {
+			HWND hwndLV = GetDlgItem(hwnd, IDC_OPENWITHDIR);
+			const auto *param = AsPointer<OpenWithDlgParam *>(GetWindowLongPtr(hwnd, DWLP_USER));
+			if (GetDirectory(hwnd, param->idsTitle, param->lpDirectory, param->lpDirectory)) {
+				DirList_Fill(hwndLV, param->lpDirectory, DL_ALLOBJECTS, nullptr, false, flagNoFadeHidden, DS_NAME, false);
+				DirList_StartIconThread(hwndLV);
+				ListView_EnsureVisible(hwndLV, 0, FALSE);
+				ListView_SetItemState(hwndLV, 0, LVIS_FOCUSED, LVIS_FOCUSED);
+			}
+			PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(hwndLV), TRUE);
+		}
+		break;
+
+		case IDOK: {
+			auto *param = AsPointer<OpenWithDlgParam *>(GetWindowLongPtr(hwnd, DWLP_USER));
+			param->dli.mask = DLI_FILENAME | DLI_TYPE;
+			param->dli.ntype = DLE_NONE;
+			DirList_GetItem(GetDlgItem(hwnd, IDC_OPENWITHDIR), (-1), &param->dli);
+
+			if (param->dli.ntype != DLE_NONE) {
+				EndDialog(hwnd, IDOK);
+			} else {
+				MessageBeep(MB_OK);
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+}
+
+//=============================================================================
+//
+// OpenWithDlg()
+//
+bool OpenWithDlg(HWND hwnd, LPCWSTR lpstrFile) {
+	OpenWithDlgParam param;
+	param.lpDirectory = tchOpenWithDir;
+	param.cxFrame = &positionRecord.cxOpenWithDlg;
+	param.cyFrame = &positionRecord.cyOpenWithDlg;
+	param.idsTitle = IDS_OPENWITH;
+	param.dli.mask = DLI_FILENAME;
+
+	if (IDOK == ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_OPENWITH), hwnd, OpenWithDlgProc, AsInteger<LPARAM>(&param))) {
+		WCHAR szParam[MAX_PATH];
+		WCHAR wchDirectory[MAX_PATH] = L"";
+
+		if (StrNotEmpty(szCurFile)) {
+			lstrcpy(wchDirectory, szCurFile);
+			PathRemoveFileSpec(wchDirectory);
+		}
+
+		SHELLEXECUTEINFO sei;
+		memset(&sei, 0, sizeof(SHELLEXECUTEINFO));
+		sei.cbSize = sizeof(SHELLEXECUTEINFO);
+		sei.fMask = 0;
+		sei.hwnd = hwnd;
+		sei.lpVerb = nullptr;
+		sei.lpFile = param.dli.szFileName;
+		sei.lpParameters = szParam;
+		sei.lpDirectory = wchDirectory;
+		sei.nShow = SW_SHOWNORMAL;
+
+		// resolve links and get short path name
+		if (!PathGetLnkPath(lpstrFile, szParam)) {
+			lstrcpy(szParam, lpstrFile);
+		}
+		PathQuoteSpaces(szParam);
+
+		ShellExecuteEx(&sei);
+
+		return true;
+	}
+	return false;
+}
+
+extern WCHAR tchFavoritesDir[MAX_PATH];
+//=============================================================================
+//
+// FavoritesDlg()
+//
+bool FavoritesDlg(HWND hwnd, LPWSTR lpstrFile) noexcept {
+	OpenWithDlgParam param;
+	param.lpDirectory = tchFavoritesDir;
+	param.cxFrame = &positionRecord.cxFavoritesDlg;
+	param.cyFrame = &positionRecord.cyFavoritesDlg;
+	param.idsTitle = IDS_FAVORITES;
+	param.dli.mask = DLI_FILENAME;
+
+	if (IDOK == ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_FAVORITES), hwnd, OpenWithDlgProc, AsInteger<LPARAM>(&param))) {
+		lstrcpyn(lpstrFile, param.dli.szFileName, MAX_PATH);
+		return true;
+	}
+
+	return false;
+}
+
+//=============================================================================
+//
+// AddToFavDlgProc()
+//
+//
+static INT_PTR CALLBACK AddToFavDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_FAVORITESDESCR) | RESIZE_INVALIDATE_RECT,
+		DeferCtlSizeX(IDC_FAVORITESFILE),
+	};
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxAddFavoritesDlg, controlDefinition, COUNTOF(controlDefinition));
+
+		HWND hwndCtl = GetDlgItem(hwnd, IDC_FAVORITESFILE);
+		Edit_LimitText(hwndCtl, MAX_PATH - 1);
+		Edit_SetText(hwndCtl, AsPointer<LPCWSTR>(lParam));
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDC_FAVORITESFILE:
+			EnableWindow(GetDlgItem(hwnd, IDOK), GetWindowTextLength(GetDlgItem(hwnd, IDC_FAVORITESFILE)));
+			break;
+
+		case IDOK: {
+			LPWSTR pszName = AsPointer<LPWSTR>(GetWindowLongPtr(hwnd, DWLP_USER));
+			GetDlgItemText(hwnd, IDC_FAVORITESFILE, pszName, MAX_PATH - 1);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// AddToFavDlg()
+//
+bool AddToFavDlg(HWND hwnd, LPCWSTR lpszName, LPCWSTR lpszTarget) {
+	WCHAR pszName[MAX_PATH];
+	lstrcpy(pszName, lpszName);
+
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_ADDTOFAV), hwnd, AddToFavDlgProc, AsInteger<LPARAM>(pszName));
+
+	if (iResult == IDOK) {
+		if (PathCreateFavLnk(pszName, lpszTarget, tchFavoritesDir)) {
+			MsgBoxInfo(MB_OK, IDS_FAV_SUCCESS);
+			return true;
+		}
+		MsgBoxWarn(MB_OK, IDS_FAV_FAILURE);
+	}
+
+	return false;
+}
+
+//=============================================================================
+//
+// FileMRUDlgProc()
+//
+//
+extern MRUList mruFile;
+extern bool bSaveRecentFiles;
+extern int iMaxRecentFiles;
+
+static DWORD WINAPI FileMRUIconThread(LPVOID lpParam) noexcept {
+	const BackgroundWorker * const worker = static_cast<const BackgroundWorker *>(lpParam);
+
+	WCHAR tch[MAX_PATH] = L"";
+	DWORD dwFlags = SHGFI_SMALLICON | SHGFI_SYSICONINDEX | SHGFI_ATTRIBUTES | SHGFI_ATTR_SPECIFIED;
+
+	HWND hwnd = worker->hwnd;
+	const int iMaxItem = ListView_GetItemCount(hwnd);
+	int iItem = 0;
+
+	LV_ITEM lvi;
+	memset(&lvi, 0, sizeof(LV_ITEM));
+
+	while (iItem < iMaxItem && worker->Continue()) {
+		lvi.mask = LVIF_TEXT;
+		lvi.pszText = tch;
+		lvi.cchTextMax = COUNTOF(tch);
+		lvi.iItem = iItem;
+		if (ListView_GetItem(hwnd, &lvi)) {
+			SHFILEINFO shfi;
+			DWORD dwAttr = 0;
+			if (PathIsUNC(tch) || !PathIsFile(tch)) {
+				dwFlags |= SHGFI_USEFILEATTRIBUTES;
+				dwAttr = FILE_ATTRIBUTE_NORMAL;
+				shfi.dwAttributes = 0;
+				SHGetFileInfo(PathFindFileName(tch), dwAttr, &shfi, sizeof(SHFILEINFO), dwFlags);
+			} else {
+				shfi.dwAttributes = SFGAO_LINK | SFGAO_SHARE;
+				SHGetFileInfo(tch, dwAttr, &shfi, sizeof(SHFILEINFO), dwFlags);
+			}
+
+			lvi.mask = LVIF_IMAGE;
+			lvi.iImage = shfi.iIcon;
+			lvi.stateMask = 0;
+			lvi.state = 0;
+
+			if (shfi.dwAttributes & SFGAO_LINK) {
+				lvi.mask |= LVIF_STATE;
+				lvi.stateMask |= LVIS_OVERLAYMASK;
+				lvi.state |= INDEXTOOVERLAYMASK(2);
+			}
+
+			if (shfi.dwAttributes & SFGAO_SHARE) {
+				lvi.mask |= LVIF_STATE;
+				lvi.stateMask |= LVIS_OVERLAYMASK;
+				lvi.state |= INDEXTOOVERLAYMASK(1);
+			}
+
+			if (PathIsUNC(tch)) {
+				dwAttr = FILE_ATTRIBUTE_NORMAL;
+			} else {
+				dwAttr = GetFileAttributes(tch);
+			}
+
+			if (!flagNoFadeHidden &&
+					dwAttr != INVALID_FILE_ATTRIBUTES &&
+					dwAttr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) {
+				lvi.mask |= LVIF_STATE;
+				lvi.stateMask |= LVIS_CUT;
+				lvi.state |= LVIS_CUT;
+			}
+
+			lvi.iSubItem = 0;
+			ListView_SetItem(hwnd, &lvi);
+		}
+		iItem++;
+	}
+
+	return 0;
+}
+
+static INT_PTR CALLBACK FileMRUDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSize(IDC_FILEMRU) | RESIZE_AUTOSIZE_USEHEADER,
+		DeferCtlMove(IDC_EMPTY_MRU),
+		DeferCtlMoveY(IDC_SAVEMRU),
+		DeferCtlMoveY(IDC_MRU_COUNT_LABEL),
+		DeferCtlMoveY(IDC_MRU_COUNT_VALUE),
+	};
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+
+		HWND hwndLV = GetDlgItem(hwnd, IDC_FILEMRU);
+		DarkMode_InitFileListView(hwndLV);
+
+		BackgroundWorker *worker = static_cast<BackgroundWorker *>(NP2HeapAlloc(sizeof(BackgroundWorker)));
+		SetProp(hwnd, L"it", worker);
+		worker->Init(hwndLV);
+
+		ResizeDlg_Init(hwnd, &positionRecord.cxFileMRUDlg, &positionRecord.cyFileMRUDlg, controlDefinition, COUNTOF(controlDefinition));
+
+		SHFILEINFO shfi;
+		ListView_SetImageList(hwndLV,
+							  AsPointer<HIMAGELIST>(SHGetFileInfo(L"C:\\", 0, &shfi, sizeof(SHFILEINFO), SHGFI_SMALLICON | SHGFI_SYSICONINDEX)),
+							  LVSIL_SMALL);
+
+		ListView_SetImageList(hwndLV,
+							  AsPointer<HIMAGELIST>(SHGetFileInfo(L"C:\\", 0, &shfi, sizeof(SHFILEINFO), SHGFI_LARGEICON | SHGFI_SYSICONINDEX)),
+							  LVSIL_NORMAL);
+
+		// Update view
+		SendWMCommand(hwnd, IDC_FILEMRU_UPDATE_VIEW);
+		SetDlgItemInt(hwnd, IDC_MRU_COUNT_VALUE, iMaxRecentFiles, FALSE);
+
+		if (bSaveRecentFiles) {
+			CheckDlgButton(hwnd, IDC_SAVEMRU, BST_CHECKED);
+		}
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_DESTROY: {
+		BackgroundWorker *worker = static_cast<BackgroundWorker *>(GetProp(hwnd, L"it"));
+		worker->Destroy();
+		RemoveProp(hwnd, L"it");
+		NP2HeapFree(worker);
+
+		bSaveRecentFiles = IsButtonChecked(hwnd, IDC_SAVEMRU);
+		iMaxRecentFiles = GetDlgItemInt(hwnd, IDC_MRU_COUNT_VALUE, nullptr, FALSE);
+		iMaxRecentFiles = max(iMaxRecentFiles, MRU_MAXITEMS);
+	}
+	return FALSE;
+
+	case WM_NOTIFY: {
+		LPNMHDR pnmhdr = AsPointer<LPNMHDR>(lParam);
+		if (pnmhdr->idFrom == IDC_FILEMRU) {
+			switch (pnmhdr->code) {
+			case NM_DBLCLK:
+				SendWMCommand(hwnd, IDOK);
+				break;
+
+			case LVN_GETDISPINFO: {
+				/*
+				LV_DISPINFO *lpdi = AsPointer<LV_DISPINFO *>(lParam);
+
+				if (lpdi->item.mask & LVIF_IMAGE) {
+					WCHAR tch[MAX_PATH];
+
+					LV_ITEM lvi;
+					memset(&lvi, 0, sizeof(LV_ITEM));
+					lvi.mask = LVIF_TEXT;
+					lvi.pszText = tch;
+					lvi.cchTextMax = COUNTOF(tch);
+					lvi.iItem = lpdi->item.iItem;
+
+					ListView_GetItem(pnmhdr->hwndFrom, &lvi);
+
+					DWORD dwFlags = SHGFI_SMALLICON | SHGFI_SYSICONINDEX | SHGFI_ATTRIBUTES | SHGFI_ATTR_SPECIFIED;
+					DWORD dwAttr = 0;
+					SHFILEINFO shfi;
+					if (!PathIsFile(tch)) {
+						dwFlags |= SHGFI_USEFILEATTRIBUTES;
+						dwAttr = FILE_ATTRIBUTE_NORMAL;
+						shfi.dwAttributes = 0;
+						SHGetFileInfo(PathFindFileName(tch), dwAttr, &shfi, sizeof(SHFILEINFO), dwFlags);
+					} else {
+						shfi.dwAttributes = SFGAO_LINK | SFGAO_SHARE;
+						SHGetFileInfo(tch, dwAttr, &shfi, sizeof(SHFILEINFO), dwFlags);
+					}
+
+					lpdi->item.iImage = shfi.iIcon;
+					lpdi->item.mask |= LVIF_DI_SETITEM;
+					lpdi->item.stateMask = 0;
+					lpdi->item.state = 0;
+
+					if (shfi.dwAttributes & SFGAO_LINK) {
+						lpdi->item.mask |= LVIF_STATE;
+						lpdi->item.stateMask |= LVIS_OVERLAYMASK;
+						lpdi->item.state |= INDEXTOOVERLAYMASK(2);
+					}
+
+					if (shfi.dwAttributes & SFGAO_SHARE) {
+						lpdi->item.mask |= LVIF_STATE;
+						lpdi->item.stateMask |= LVIS_OVERLAYMASK;
+						lpdi->item.state |= INDEXTOOVERLAYMASK(1);
+					}
+
+					dwAttr = GetFileAttributes(tch);
+
+					if (!flagNoFadeHidden &&
+							dwAttr != INVALID_FILE_ATTRIBUTES &&
+							dwAttr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) {
+						lpdi->item.mask |= LVIF_STATE;
+						lpdi->item.stateMask |= LVIS_CUT;
+						lpdi->item.state |= LVIS_CUT;
+					}
+				}
+				*/
+			}
+			break;
+
+			case LVN_ITEMCHANGED:
+			case LVN_DELETEITEM:
+				EnableWindow(GetDlgItem(hwnd, IDOK), ListView_GetSelectedCount(pnmhdr->hwndFrom));
+				break;
+			}
+		} else if (pnmhdr->idFrom == IDC_EMPTY_MRU) {
+			if ((pnmhdr->code == NM_CLICK || pnmhdr->code == NM_RETURN)) {
+				mruFile.Empty(bSaveRecentFiles);
+				if (StrNotEmpty(szCurFile)) {
+					mruFile.Add(szCurFile);
+				}
+				SendWMCommand(hwnd, IDC_FILEMRU_UPDATE_VIEW);
+			}
+		}
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDC_FILEMRU_UPDATE_VIEW: {
+			BackgroundWorker *worker = static_cast<BackgroundWorker *>(GetProp(hwnd, L"it"));
+			worker->Cancel();
+
+			HWND hwndLV = GetDlgItem(hwnd, IDC_FILEMRU);
+			ListView_DeleteAllItems(hwndLV);
+
+			LV_ITEM lvi;
+			memset(&lvi, 0, sizeof(LV_ITEM));
+			lvi.mask = LVIF_TEXT | LVIF_IMAGE;
+
+			SHFILEINFO shfi;
+			SHGetFileInfo(L"Icon", FILE_ATTRIBUTE_NORMAL, &shfi, sizeof(SHFILEINFO),
+						  SHGFI_USEFILEATTRIBUTES | SHGFI_SMALLICON | SHGFI_SYSICONINDEX);
+			lvi.iImage = shfi.iIcon;
+
+			for (int i = 0; i < mruFile.iSize; i++) {
+				LPWSTR path = mruFile.pszItems[i];
+				lvi.iItem = i;
+				lvi.pszText = path;
+				ListView_InsertItem(hwndLV, &lvi);
+			}
+
+			ListView_SetItemState(hwndLV, 0, LVIS_FOCUSED, LVIS_FOCUSED);
+			ListView_SetColumnWidth(hwndLV, 0, LVSCW_AUTOSIZE_USEHEADER);
+
+			worker->workerThread = CreateThread(nullptr, 0, FileMRUIconThread, worker, 0, nullptr);
+		}
+		break;
+
+		case IDC_FILEMRU:
+			break;
+
+		case IDOK: {
+			WCHAR tch[MAX_PATH];
+			HWND hwndLV = GetDlgItem(hwnd, IDC_FILEMRU);
+
+			if (ListView_GetSelectedCount(hwndLV)) {
+				LV_ITEM lvi;
+				memset(&lvi, 0, sizeof(LV_ITEM));
+
+				lvi.mask = LVIF_TEXT;
+				lvi.pszText = tch;
+				lvi.cchTextMax = COUNTOF(tch);
+				lvi.iItem = ListView_GetNextItem(hwndLV, -1, LVNI_ALL | LVNI_SELECTED);
+
+				ListView_GetItem(hwndLV, &lvi);
+
+				PathUnquoteSpaces(tch);
+
+				if (!PathIsFile(tch)) {
+					// Ask...
+					if (IDYES == MsgBoxWarn(MB_YESNO, IDS_ERR_MRUDLG)) {
+						mruFile.DeleteFileFromStore(tch, lvi.iItem);
+
+						// must use recreate the list, index might change...
+						//ListView_DeleteItem(hwndLV, lvi.iItem);
+						SendWMCommand(hwnd, IDC_FILEMRU_UPDATE_VIEW);
+
+						EnableWindow(GetDlgItem(hwnd, IDOK), ListView_GetSelectedCount(hwndLV));
+					}
+				} else {
+					lstrcpy(AsPointer<LPWSTR>(GetWindowLongPtr(hwnd, DWLP_USER)), tch);
+					EndDialog(hwnd, IDOK);
+				}
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// FileMRUDlg()
+//
+//
+bool FileMRUDlg(HWND hwnd, LPWSTR lpstrFile) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_FILEMRU), hwnd, FileMRUDlgProc, AsInteger<LPARAM>(lpstrFile));
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// ChangeNotifyDlgProc()
+//
+//
+extern FileWatchingMode iFileWatchingMode;
+extern int iFileWatchingOption;
+extern bool bResetFileWatching;
+
+static INT_PTR CALLBACK ChangeNotifyDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG:
+		CheckRadioButton(hwnd, IDC_CHANGENOTIFY_NONE, IDC_CHANGENOTIFY_AUTO_RELOAD, IDC_CHANGENOTIFY_NONE + static_cast<int>(iFileWatchingMode));
+		if (iFileWatchingOption & FileWatchingOption_LogFile) {
+			CheckDlgButton(hwnd, IDC_CHANGENOTIFY_LOG_FILE, BST_CHECKED);
+		}
+		if (iFileWatchingOption & FileWatchingOption_KeepAtEnd) {
+			CheckDlgButton(hwnd, IDC_CHANGENOTIFY_KEEP_AT_END, BST_CHECKED);
+		}
+		if (bResetFileWatching) {
+			CheckDlgButton(hwnd, IDC_CHANGENOTIFY_RESET_WATCH, BST_CHECKED);
+		}
+		DarkMode_InitDialog(hwnd);
+		return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			int value = GetCheckedRadioButton(hwnd, IDC_CHANGENOTIFY_NONE, IDC_CHANGENOTIFY_AUTO_RELOAD);
+			iFileWatchingMode = static_cast<FileWatchingMode>(value - IDC_CHANGENOTIFY_NONE);
+			value = FileWatchingOption_None;
+			if (IsButtonChecked(hwnd, IDC_CHANGENOTIFY_LOG_FILE)) {
+				value |= FileWatchingOption_LogFile;
+			}
+			if (IsButtonChecked(hwnd, IDC_CHANGENOTIFY_KEEP_AT_END)) {
+				value |= FileWatchingOption_KeepAtEnd;
+			}
+			iFileWatchingOption = value;
+			bResetFileWatching = IsButtonChecked(hwnd, IDC_CHANGENOTIFY_RESET_WATCH);
+			EndDialog(hwnd, IDOK);
+		} break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+//=============================================================================
+//
+// ChangeNotifyDlg()
+//
+bool ChangeNotifyDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_CHANGENOTIFY), hwnd, ChangeNotifyDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// ColumnWrapDlgProc()
+//
+//
+static INT_PTR CALLBACK ColumnWrapDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		const int column = iWrapColumn ? iWrapColumn : fvCurFile.iLongLinesLimit;
+
+		SetDlgItemInt(hwnd, IDC_COLUMNWRAP, column, FALSE);
+		SendDlgItemMessage(hwnd, IDC_COLUMNWRAP, EM_LIMITTEXT, 15, 0);
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			BOOL fTranslated;
+			const int column = GetDlgItemInt(hwnd, IDC_COLUMNWRAP, &fTranslated, FALSE);
+
+			if (fTranslated) {
+				iWrapColumn = clamp(column, 1, 512);
+
+				EndDialog(hwnd, IDOK);
+			} else {
+				PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, IDC_COLUMNWRAP)), TRUE);
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// ColumnWrapDlg()
+//
+bool ColumnWrapDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_COLUMNWRAP), hwnd, ColumnWrapDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// WordWrapSettingsDlgProc()
+//
+//
+extern bool fWordWrapG;
+extern int iWordWrapMode;
+extern int iWordWrapIndent;
+extern int iWordWrapSymbols;
+extern bool bShowWordWrapSymbols;
+extern bool bWordWrapSelectSubLine;
+extern bool bHighlightCurrentSubLine;
+
+static INT_PTR CALLBACK WordWrapSettingsDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		WCHAR tch[512];
+		for (int i = 0; i < 4; i++) {
+			HWND hwndCtl = GetDlgItem(hwnd, IDC_WRAP_INDENT + i);
+			GetString(IDS_WRAP_INDENT_OPTIONS + i, tch, COUNTOF(tch));
+			lstrcat(tch, L"|");
+			LPWSTR p1 = tch;
+			LPWSTR p2;
+			while ((p2 = StrChr(p1, L'|')) != nullptr) {
+				*p2++ = L'\0';
+				if (*p1) {
+					ComboBox_AddString(hwndCtl, p1);
+				}
+				p1 = p2;
+			}
+
+			ComboBox_SetExtendedUI(hwndCtl, TRUE);
+		}
+
+		SendDlgItemMessage(hwnd, IDC_WRAP_INDENT, CB_SETCURSEL, iWordWrapIndent, 0);
+		SendDlgItemMessage(hwnd, IDC_WRAP_SYMBOL_BEFORE, CB_SETCURSEL, bShowWordWrapSymbols ? (iWordWrapSymbols % 10) : 0, 0);
+		SendDlgItemMessage(hwnd, IDC_WRAP_SYMBOL_AFTER, CB_SETCURSEL, bShowWordWrapSymbols ? (iWordWrapSymbols / 10) : 0, 0);
+		SendDlgItemMessage(hwnd, IDC_WRAP_MODE, CB_SETCURSEL, iWordWrapMode, 0);
+
+		if (bWordWrapSelectSubLine) {
+			CheckDlgButton(hwnd, IDC_WRAP_SELECT_SUBLINE, BST_CHECKED);
+		}
+		if (bHighlightCurrentSubLine) {
+			CheckDlgButton(hwnd, IDC_WRAP_HIGHLIGHT_SUBLINE, BST_CHECKED);
+		}
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			iWordWrapIndent = static_cast<int>(SendDlgItemMessage(hwnd, IDC_WRAP_INDENT, CB_GETCURSEL, 0, 0));
+			bShowWordWrapSymbols = false;
+			int iSel = static_cast<int>(SendDlgItemMessage(hwnd, IDC_WRAP_SYMBOL_BEFORE, CB_GETCURSEL, 0, 0));
+			const int iSel2 = static_cast<int>(SendDlgItemMessage(hwnd, IDC_WRAP_SYMBOL_AFTER, CB_GETCURSEL, 0, 0));
+			if (iSel > 0 || iSel2 > 0) {
+				bShowWordWrapSymbols = true;
+				iWordWrapSymbols = iSel + iSel2 * 10;
+			}
+
+			iSel = static_cast<int>(SendDlgItemMessage(hwnd, IDC_WRAP_MODE, CB_GETCURSEL, 0, 0));
+			if (iSel != SC_WRAP_NONE) {
+				iWordWrapMode = iSel;
+			}
+
+			fWordWrapG = fvCurFile.fWordWrap = iSel != SC_WRAP_NONE;
+			bWordWrapSelectSubLine = IsButtonChecked(hwnd, IDC_WRAP_SELECT_SUBLINE);
+			bHighlightCurrentSubLine = IsButtonChecked(hwnd, IDC_WRAP_HIGHLIGHT_SUBLINE);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// WordWrapSettingsDlg()
+//
+bool WordWrapSettingsDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_WORDWRAP), hwnd, WordWrapSettingsDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// LongLineSettingsDlgProc()
+//
+//
+extern int iLongLineMode;
+extern int iLongLinesLimitG;
+
+static INT_PTR CALLBACK LongLineSettingsDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetDlgItemInt(hwnd, IDC_LONGLINE_LIMIT, fvCurFile.iLongLinesLimit, FALSE);
+		SendDlgItemMessage(hwnd, IDC_LONGLINE_LIMIT, EM_LIMITTEXT, 15, 0);
+
+		if (iLongLineMode == EDGE_LINE) {
+			CheckRadioButton(hwnd, IDC_LONGLINE_EDGE_LINE, IDC_LONGLINE_BACK_COLOR, IDC_LONGLINE_EDGE_LINE);
+		} else {
+			CheckRadioButton(hwnd, IDC_LONGLINE_EDGE_LINE, IDC_LONGLINE_BACK_COLOR, IDC_LONGLINE_BACK_COLOR);
+		}
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			BOOL fTranslated;
+			int longLinesLimit = GetDlgItemInt(hwnd, IDC_LONGLINE_LIMIT, &fTranslated, FALSE);
+
+			if (fTranslated) {
+				longLinesLimit = clamp(longLinesLimit, 0, NP2_LONG_LINE_LIMIT);
+				fvCurFile.iLongLinesLimit = longLinesLimit;
+				iLongLinesLimitG = longLinesLimit;
+				iLongLineMode = IsButtonChecked(hwnd, IDC_LONGLINE_EDGE_LINE) ? EDGE_LINE : EDGE_BACKGROUND;
+
+				EndDialog(hwnd, IDOK);
+			} else {
+				PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, IDC_LONGLINE_LIMIT)), TRUE);
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// LongLineSettingsDlg()
+//
+bool LongLineSettingsDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_LONGLINES), hwnd, LongLineSettingsDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// TabSettingsDlgProc()
+//
+//
+static void SyncGlobalTabSettings(HWND hwnd) noexcept {
+	const bool useGlobal = IsButtonChecked(hwnd, IDC_SCHEME_USE_GLOBAL_TAB);
+	if (useGlobal) {
+		WCHAR wch[16];
+		GetDlgItemText(hwnd, IDC_GLOBAL_TAB_WIDTH, wch, COUNTOF(wch));
+		SetDlgItemText(hwnd, IDC_SCHEME_TAB_WIDTH, wch);
+		GetDlgItemText(hwnd, IDC_GLOBAL_INDENT_WIDTH, wch, COUNTOF(wch));
+		SetDlgItemText(hwnd, IDC_SCHEME_INDENT_WIDTH, wch);
+		CheckDlgButton(hwnd, IDC_SCHEME_TAB_AS_SPACE, IsDlgButtonChecked(hwnd, IDC_GLOBAL_TAB_AS_SPACE));
+	} else {
+		SetDlgItemInt(hwnd, IDC_SCHEME_TAB_WIDTH, tabSettings.schemeTabWidth, FALSE);
+		SetDlgItemInt(hwnd, IDC_SCHEME_INDENT_WIDTH, tabSettings.schemeIndentWidth, FALSE);
+		CheckDlgButton(hwnd, IDC_SCHEME_TAB_AS_SPACE, tabSettings.schemeTabsAsSpaces ? BST_CHECKED : BST_UNCHECKED);
+	}
+	EnableWindow(GetDlgItem(hwnd, IDC_SCHEME_TAB_WIDTH), !useGlobal);
+	EnableWindow(GetDlgItem(hwnd, IDC_SCHEME_INDENT_WIDTH), !useGlobal);
+	EnableWindow(GetDlgItem(hwnd, IDC_SCHEME_TAB_AS_SPACE), !useGlobal);
+}
+
+static void SyncSchemeTabSettings(HWND hwnd) noexcept {
+	const bool useScheme = IsButtonChecked(hwnd, IDC_FILE_USE_SCHEME_TAB);
+	if (useScheme) {
+		WCHAR wch[16];
+		GetDlgItemText(hwnd, IDC_SCHEME_TAB_WIDTH, wch, COUNTOF(wch));
+		SetDlgItemText(hwnd, IDC_FILE_TAB_WIDTH, wch);
+		GetDlgItemText(hwnd, IDC_SCHEME_INDENT_WIDTH, wch, COUNTOF(wch));
+		SetDlgItemText(hwnd, IDC_FILE_INDENT_WIDTH, wch);
+		CheckDlgButton(hwnd, IDC_FILE_TAB_AS_SPACE, IsDlgButtonChecked(hwnd, IDC_SCHEME_TAB_AS_SPACE));
+	} else {
+		SetDlgItemInt(hwnd, IDC_FILE_TAB_WIDTH, fvCurFile.iTabWidth, FALSE);
+		SetDlgItemInt(hwnd, IDC_FILE_INDENT_WIDTH, fvCurFile.iIndentWidth, FALSE);
+		CheckDlgButton(hwnd, IDC_FILE_TAB_AS_SPACE, fvCurFile.bTabsAsSpaces ? BST_CHECKED : BST_UNCHECKED);
+	}
+	EnableWindow(GetDlgItem(hwnd, IDC_FILE_TAB_WIDTH), !useScheme);
+	EnableWindow(GetDlgItem(hwnd, IDC_FILE_INDENT_WIDTH), !useScheme);
+	EnableWindow(GetDlgItem(hwnd, IDC_FILE_TAB_AS_SPACE), !useScheme);
+}
+
+static INT_PTR CALLBACK TabSettingsDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		WCHAR wch[MAX_EDITLEXER_NAME_SIZE];
+		Style_LoadTabSettings(pLexCurrent);
+		LPCWSTR pszName = Style_GetCurrentLexerName(wch, COUNTOF(wch));
+		SetDlgItemText(hwnd, IDC_SCHEME_TAB_GROUPBOX, pszName);
+		if (StrIsEmpty(szCurFile)) {
+			GetString(IDS_UNTITLED, wch, COUNTOF(wch));
+			pszName = wch;
+		} else {
+			pszName = PathFindFileName(szCurFile);
+		}
+		SetDlgItemText(hwnd, IDC_FILE_TAB_GROUPBOX, pszName);
+
+		SetDlgItemInt(hwnd, IDC_GLOBAL_TAB_WIDTH, tabSettings.globalTabWidth, FALSE);
+		SendDlgItemMessage(hwnd, IDC_GLOBAL_TAB_WIDTH, EM_LIMITTEXT, 15, 0);
+		SetDlgItemInt(hwnd, IDC_GLOBAL_INDENT_WIDTH, tabSettings.globalIndentWidth, FALSE);
+		SendDlgItemMessage(hwnd, IDC_GLOBAL_INDENT_WIDTH, EM_LIMITTEXT, 15, 0);
+		if (tabSettings.globalTabsAsSpaces) {
+			CheckDlgButton(hwnd, IDC_GLOBAL_TAB_AS_SPACE, BST_CHECKED);
+		}
+
+		SetDlgItemInt(hwnd, IDC_SCHEME_TAB_WIDTH, tabSettings.schemeTabWidth, FALSE);
+		SendDlgItemMessage(hwnd, IDC_SCHEME_TAB_WIDTH, EM_LIMITTEXT, 15, 0);
+		SetDlgItemInt(hwnd, IDC_SCHEME_INDENT_WIDTH, tabSettings.schemeIndentWidth, FALSE);
+		SendDlgItemMessage(hwnd, IDC_SCHEME_INDENT_WIDTH, EM_LIMITTEXT, 15, 0);
+		if (tabSettings.schemeTabsAsSpaces) {
+			CheckDlgButton(hwnd, IDC_SCHEME_TAB_AS_SPACE, BST_CHECKED);
+		}
+		if (tabSettings.schemeUseGlobalTabSettings) {
+			CheckDlgButton(hwnd, IDC_SCHEME_USE_GLOBAL_TAB, BST_CHECKED);
+			SyncGlobalTabSettings(hwnd);
+		}
+
+		SetDlgItemInt(hwnd, IDC_FILE_TAB_WIDTH, fvCurFile.iTabWidth, FALSE);
+		SendDlgItemMessage(hwnd, IDC_FILE_TAB_WIDTH, EM_LIMITTEXT, 15, 0);
+		SetDlgItemInt(hwnd, IDC_FILE_INDENT_WIDTH, fvCurFile.iIndentWidth, FALSE);
+		SendDlgItemMessage(hwnd, IDC_FILE_INDENT_WIDTH, EM_LIMITTEXT, 15, 0);
+		if (fvCurFile.bTabsAsSpaces) {
+			CheckDlgButton(hwnd, IDC_FILE_TAB_AS_SPACE, BST_CHECKED);
+		}
+		const BOOL hasFileTabSettings = fvCurFile.mask & FV_MaskHasFileTabSettings;
+		if (!hasFileTabSettings) {
+			CheckDlgButton(hwnd, IDC_FILE_USE_SCHEME_TAB, BST_CHECKED);
+			SyncSchemeTabSettings(hwnd);
+		}
+
+		if (fvCurFile.bTabIndents) {
+			CheckDlgButton(hwnd, IDC_TAB_INDENT, BST_CHECKED);
+		}
+		if (tabSettings.bBackspaceUnindents & 2) {
+			CheckDlgButton(hwnd, IDC_BACKSPACE_SMARTDEL, BST_CHECKED);
+		}
+		if (tabSettings.bBackspaceUnindents & 1) {
+			CheckDlgButton(hwnd, IDC_BACKSPACE_UNINDENT, BST_CHECKED);
+		}
+		if (tabSettings.bDetectIndentation) {
+			CheckDlgButton(hwnd, IDC_DETECT_INDENTATION, BST_CHECKED);
+		}
+
+		DarkMode_InitDialog(hwnd);
+		if (hasFileTabSettings || !tabSettings.schemeUseGlobalTabSettings) {
+			HWND hwndCtl = GetDlgItem(hwnd, hasFileTabSettings ? IDC_FILE_TAB_WIDTH : IDC_SCHEME_TAB_WIDTH);
+			SetFocus(hwndCtl);
+			PostMessage(hwndCtl, EM_SETSEL, 0, -1);
+			return FALSE;
+		}
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			BOOL fTranslated1;
+			BOOL fTranslated2;
+
+			int iNewTabWidth = GetDlgItemInt(hwnd, IDC_GLOBAL_TAB_WIDTH, &fTranslated1, FALSE);
+			int iNewIndentWidth = GetDlgItemInt(hwnd, IDC_GLOBAL_INDENT_WIDTH, &fTranslated2, FALSE);
+			if (fTranslated1 && fTranslated2) {
+				tabSettings.globalTabWidth = clamp(iNewTabWidth, TAB_WIDTH_MIN, TAB_WIDTH_MAX);
+				tabSettings.globalIndentWidth = clamp(iNewIndentWidth, INDENT_WIDTH_MIN, INDENT_WIDTH_MAX);
+				tabSettings.globalTabsAsSpaces = IsButtonChecked(hwnd, IDC_GLOBAL_TAB_AS_SPACE);
+			} else {
+				PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, fTranslated1 ? IDC_GLOBAL_INDENT_WIDTH : IDC_GLOBAL_TAB_WIDTH)), TRUE);
+				break;
+			}
+
+			const bool useGlobal = IsButtonChecked(hwnd, IDC_SCHEME_USE_GLOBAL_TAB);
+			tabSettings.schemeUseGlobalTabSettings = useGlobal;
+			if (useGlobal) {
+				tabSettings.schemeTabWidth = tabSettings.globalTabWidth;
+				tabSettings.schemeIndentWidth = tabSettings.globalIndentWidth;
+				tabSettings.schemeTabsAsSpaces = tabSettings.globalTabsAsSpaces;
+			} else {
+				iNewTabWidth = GetDlgItemInt(hwnd, IDC_SCHEME_TAB_WIDTH, &fTranslated1, FALSE);
+				iNewIndentWidth = GetDlgItemInt(hwnd, IDC_SCHEME_INDENT_WIDTH, &fTranslated2, FALSE);
+				if (fTranslated1 && fTranslated2) {
+					tabSettings.schemeTabWidth = clamp(iNewTabWidth, TAB_WIDTH_MIN, TAB_WIDTH_MAX);
+					tabSettings.schemeIndentWidth = clamp(iNewIndentWidth, INDENT_WIDTH_MIN, INDENT_WIDTH_MAX);
+					tabSettings.schemeTabsAsSpaces = IsButtonChecked(hwnd, IDC_SCHEME_TAB_AS_SPACE);
+				} else {
+					PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, fTranslated1 ? IDC_SCHEME_INDENT_WIDTH : IDC_SCHEME_TAB_WIDTH)), TRUE);
+					break;
+				}
+			}
+
+			if (IsButtonChecked(hwnd, IDC_FILE_USE_SCHEME_TAB)) {
+				fvCurFile.mask &= ~FV_MaskHasFileTabSettings;
+				fvCurFile.iTabWidth = tabSettings.schemeTabWidth;
+				fvCurFile.iIndentWidth = tabSettings.schemeIndentWidth;
+				fvCurFile.bTabsAsSpaces = tabSettings.schemeTabsAsSpaces;
+			} else {
+				iNewTabWidth = GetDlgItemInt(hwnd, IDC_FILE_TAB_WIDTH, &fTranslated1, FALSE);
+				iNewIndentWidth = GetDlgItemInt(hwnd, IDC_FILE_INDENT_WIDTH, &fTranslated2, FALSE);
+				if (fTranslated1 && fTranslated2) {
+					fvCurFile.mask |= FV_MaskHasFileTabSettings;
+					fvCurFile.iTabWidth = clamp(iNewTabWidth, TAB_WIDTH_MIN, TAB_WIDTH_MAX);
+					fvCurFile.iIndentWidth = clamp(iNewIndentWidth, INDENT_WIDTH_MIN, INDENT_WIDTH_MAX);
+					fvCurFile.bTabsAsSpaces = IsButtonChecked(hwnd, IDC_FILE_TAB_AS_SPACE);
+				} else {
+					PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, fTranslated1 ? IDC_FILE_INDENT_WIDTH : IDC_FILE_TAB_WIDTH)), TRUE);
+					break;
+				}
+			}
+
+			fvCurFile.bTabIndents = IsButtonChecked(hwnd, IDC_TAB_INDENT);
+			tabSettings.bTabIndents = fvCurFile.bTabIndents;
+			tabSettings.bBackspaceUnindents = IsButtonChecked(hwnd, IDC_BACKSPACE_UNINDENT);
+			if (IsButtonChecked(hwnd, IDC_BACKSPACE_SMARTDEL)) {
+				tabSettings.bBackspaceUnindents |= 2;
+			}
+			tabSettings.bDetectIndentation = IsButtonChecked(hwnd, IDC_DETECT_INDENTATION);
+			Style_SaveTabSettings(pLexCurrent);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDC_GLOBAL_TAB_WIDTH:
+		case IDC_GLOBAL_INDENT_WIDTH:
+			if (HIWORD(wParam) == EN_CHANGE) {
+				SyncGlobalTabSettings(hwnd);
+				SyncSchemeTabSettings(hwnd);
+			}
+			break;
+
+		case IDC_GLOBAL_TAB_AS_SPACE:
+		case IDC_SCHEME_USE_GLOBAL_TAB:
+			SyncGlobalTabSettings(hwnd);
+			SyncSchemeTabSettings(hwnd);
+			break;
+
+		case IDC_SCHEME_TAB_WIDTH:
+		case IDC_SCHEME_INDENT_WIDTH:
+			if (HIWORD(wParam) == EN_CHANGE) {
+				SyncSchemeTabSettings(hwnd);
+			}
+			break;
+
+		case IDC_SCHEME_TAB_AS_SPACE:
+		case IDC_FILE_USE_SCHEME_TAB:
+			SyncSchemeTabSettings(hwnd);
+			break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// TabSettingsDlg()
+//
+bool TabSettingsDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_TABSETTINGS), hwnd, TabSettingsDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// SelectDefEncodingDlgProc()
+//
+//
+struct ENCODEDLG {
+	bool bRecodeOnly;
+	int  idEncoding;
+	UINT uidLabel;
+};
+
+static INT_PTR CALLBACK SelectDefEncodingDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		LPCWSTR wchLabel = Encoding_GetLabel(iDefaultEncoding);
+		SetDlgItemText(hwnd, IDC_ENCODING_LABEL, wchLabel);
+
+		if (bSkipUnicodeDetection) {
+			CheckDlgButton(hwnd, IDC_NOUNICODEDETECTION, BST_CHECKED);
+		}
+
+		if (bLoadANSIasUTF8) {
+			CheckDlgButton(hwnd, IDC_ANSIASUTF8, BST_CHECKED);
+		}
+		if (bLoadASCIIasUTF8) {
+			CheckDlgButton(hwnd, IDC_ASCIIASUTF8, BST_CHECKED);
+		}
+
+		if (bLoadNFOasOEM) {
+			CheckDlgButton(hwnd, IDC_NFOASOEM, BST_CHECKED);
+		}
+
+		if (bNoEncodingTags) {
+			CheckDlgButton(hwnd, IDC_ENCODINGFROMFILEVARS, BST_CHECKED);
+		}
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_NOTIFY: {
+		LPNMHDR pnmhdr = AsPointer<LPNMHDR>(lParam);
+		switch (pnmhdr->code) {
+		case NM_CLICK:
+		case NM_RETURN:
+			if (pnmhdr->idFrom == IDC_ENCODING_LINK) {
+				if (SelectEncodingDlg(hwndMain, &iDefaultEncoding, IDS_SELRECT_DEFAULT_ENCODING)) {
+					LPCWSTR wchLabel = Encoding_GetLabel(iDefaultEncoding);
+					SetDlgItemText(hwnd, IDC_ENCODING_LABEL, wchLabel);
+				}
+			}
+			break;
+		}
+	}
+	break;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			bSkipUnicodeDetection = IsButtonChecked(hwnd, IDC_NOUNICODEDETECTION);
+			bLoadANSIasUTF8 = IsButtonChecked(hwnd, IDC_ANSIASUTF8);
+			bLoadASCIIasUTF8 = IsButtonChecked(hwnd, IDC_ASCIIASUTF8);
+			bLoadNFOasOEM = IsButtonChecked(hwnd, IDC_NFOASOEM);
+			bNoEncodingTags = IsButtonChecked(hwnd, IDC_ENCODINGFROMFILEVARS);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+//=============================================================================
+//
+// SelectDefEncodingDlg()
+//
+bool SelectDefEncodingDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_DEFENCODING), hwnd, SelectDefEncodingDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// SelectEncodingDlgProc()
+//
+//
+static INT_PTR CALLBACK SelectEncodingDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSize(IDC_ENCODINGLIST),
+	};
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+		const ENCODEDLG * const pdd = AsPointer<const ENCODEDLG*>(lParam);
+		ResizeDlg_Init(hwnd, &positionRecord.cxEncodingDlg, &positionRecord.cyEncodingDlg, controlDefinition, COUNTOF(controlDefinition));
+
+		WCHAR wch[256];
+		GetString(pdd->uidLabel, wch, COUNTOF(wch));
+		SetDlgItemText(hwnd, IDC_ENCODING_LABEL, wch);
+
+		// TODO: following code is buggy when icon size for shfi.hIcon is larger than bmp.bmHeight,
+		// we need to determine icon size first, then resize the encoding mask bitmap accordingly.
+
+		const int resource = GetBitmapResourceIdForCurrentDPI(IDB_ENCODING16);
+		HBITMAP hbmp = static_cast<HBITMAP>(LoadImage(g_exeInstance, MAKEINTRESOURCE(resource), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+		hbmp = ResizeImageForCurrentDPI(hbmp);
+		BITMAP bmp;
+		GetObject(hbmp, sizeof(BITMAP), &bmp);
+		HIMAGELIST himl = ImageList_Create(bmp.bmHeight, bmp.bmHeight, ILC_COLOR32 | ILC_MASK, 0, 0);
+		ImageList_AddMasked(himl, hbmp, CLR_DEFAULT);
+		DeleteObject(hbmp);
+
+		// folder icon
+		const DWORD iconFlags = GetCurrentIconHandleFlags();
+		SHFILEINFO shfi;
+		SHGetFileInfo(L"Icon", FILE_ATTRIBUTE_DIRECTORY, &shfi, sizeof(SHFILEINFO), iconFlags);
+		ImageList_AddIcon(himl, shfi.hIcon);
+
+		HWND hwndTV = GetDlgItem(hwnd, IDC_ENCODINGLIST);
+		DarkMode_InitTreeView(hwndTV);
+
+		TreeView_SetImageList(hwndTV, himl, TVSIL_NORMAL);
+		Encoding_AddToTreeView(hwndTV, pdd->idEncoding, pdd->bRecodeOnly);
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_DESTROY: {
+		HIMAGELIST himl = TreeView_GetImageList(GetDlgItem(hwnd, IDC_ENCODINGLIST), TVSIL_NORMAL);
+		ImageList_Destroy(himl);
+	}
+	return FALSE;
+
+	case WM_NOTIFY: {
+		LPNMHDR lpnmh = AsPointer<LPNMHDR>(lParam);
+		if (lpnmh->idFrom == IDC_ENCODINGLIST) {
+			switch (lpnmh->code) {
+			case NM_DBLCLK: {
+				int temp = -1;
+				if (Encoding_GetFromTreeView(lpnmh->hwndFrom, &temp, true)) {
+					SendWMCommand(hwnd, IDOK);
+				}
+			}
+			break;
+
+			case TVN_SELCHANGED: {
+				LPNMTREEVIEW lpnmtv = AsPointer<LPNMTREEVIEW>(lParam);
+				EnableWindow(GetDlgItem(hwnd, IDOK), lpnmtv->itemNew.lParam != 0);
+				if (lpnmtv->itemNew.lParam == 0) {
+					TreeView_Expand(lpnmh->hwndFrom, lpnmtv->itemNew.hItem, TVE_EXPAND);
+				}
+			}
+			break;
+			}
+		}
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			HWND hwndTV = GetDlgItem(hwnd, IDC_ENCODINGLIST);
+			ENCODEDLG * pdd = AsPointer<ENCODEDLG *>(GetWindowLongPtr(hwnd, DWLP_USER));
+			if (Encoding_GetFromTreeView(hwndTV, &pdd->idEncoding, false)) {
+				EndDialog(hwnd, IDOK);
+			} else {
+				PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(hwndTV), TRUE);
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+//
+// SelectEncodingDlg()
+//
+bool SelectEncodingDlg(HWND hwnd, int *pidREncoding, UINT uidLabel) noexcept {
+	ENCODEDLG dd;
+
+	dd.bRecodeOnly = (uidLabel == IDS_SELRECT_RELOAD_ENCODING);
+	dd.idEncoding = *pidREncoding;
+	dd.uidLabel = uidLabel;
+
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_SELECT_ENCODING), hwnd, SelectEncodingDlgProc, AsInteger<LPARAM>(&dd));
+
+	if (iResult == IDOK) {
+		*pidREncoding = dd.idEncoding;
+		return true;
+	}
+	return false;
+}
+
+//=============================================================================
+//
+// SelectDefLineEndingDlgProc()
+//
+static INT_PTR CALLBACK SelectDefLineEndingDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		// Load options
+		HWND hwndCtl = GetDlgItem(hwnd, IDC_EOLMODELIST);
+		WCHAR wch[128];
+		for (int i = 0; i < 3; i++) {
+			GetString(IDS_EOLMODENAME_CRLF + GetScintillaEOLMode(i), wch, COUNTOF(wch));
+			ComboBox_AddString(hwndCtl, wch);
+		}
+
+		ComboBox_SetCurSel(hwndCtl, iDefaultEOLMode);
+		ComboBox_SetExtendedUI(hwndCtl, TRUE);
+
+		if (bWarnLineEndings) {
+			CheckDlgButton(hwnd, IDC_WARNINCONSISTENTEOLS, BST_CHECKED);
+		}
+
+		if (bFixLineEndings) {
+			CheckDlgButton(hwnd, IDC_CONSISTENTEOLS, BST_CHECKED);
+		}
+
+		if (bAutoStripBlanks) {
+			CheckDlgButton(hwnd, IDC_AUTOSTRIPBLANKS, BST_CHECKED);
+		}
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			iDefaultEOLMode = static_cast<int>(SendDlgItemMessage(hwnd, IDC_EOLMODELIST, CB_GETCURSEL, 0, 0));
+			bWarnLineEndings = IsButtonChecked(hwnd, IDC_WARNINCONSISTENTEOLS);
+			bFixLineEndings = IsButtonChecked(hwnd, IDC_CONSISTENTEOLS);
+			bAutoStripBlanks = IsButtonChecked(hwnd, IDC_AUTOSTRIPBLANKS);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+//=============================================================================
+//
+// SelectDefLineEndingDlg()
+//
+bool SelectDefLineEndingDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_DEFEOLMODE), hwnd, SelectDefLineEndingDlgProc, 0);
+	return iResult == IDOK;
+}
+
+static INT_PTR CALLBACK WarnLineEndingDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+		const EditFileIOStatus * const status = AsPointer<EditFileIOStatus *>(lParam);
+
+		// Load options
+		HWND hwndCtl = GetDlgItem(hwnd, IDC_EOLMODELIST);
+		WCHAR wch[128];
+		for (int i = 0; i < 3; i++) {
+			GetString(IDS_EOLMODENAME_CRLF + GetScintillaEOLMode(i), wch, COUNTOF(wch));
+			ComboBox_AddString(hwndCtl, wch);
+		}
+
+		const int iEOLMode = GetSettingsEOLMode(status->iEOLMode);
+		ComboBox_SetCurSel(hwndCtl, iEOLMode);
+		ComboBox_SetExtendedUI(hwndCtl, TRUE);
+
+		WCHAR tchFmt[128];
+		for (int i = 0; i < 3; i++) {
+			WCHAR tchLn[32];
+			FormatNumber(tchLn, status->linesCount[i]);
+			GetDlgItemText(hwnd, IDC_EOL_SUM_CRLF + i, tchFmt, COUNTOF(tchFmt));
+			wsprintf(wch, tchFmt, tchLn);
+			SetDlgItemText(hwnd, IDC_EOL_SUM_CRLF + i, wch);
+		}
+
+		if (bWarnLineEndings) {
+			CheckDlgButton(hwnd, IDC_WARNINCONSISTENTEOLS, BST_CHECKED);
+		}
+		if (status->bLineEndingsDefaultNo) {
+			SendMessage(hwnd, DM_SETDEFID, IDCANCEL, 0);
+		}
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			EditFileIOStatus *status = AsPointer<EditFileIOStatus *>(GetWindowLongPtr(hwnd, DWLP_USER));
+			const int iEOLMode = static_cast<int>(SendDlgItemMessage(hwnd, IDC_EOLMODELIST, CB_GETCURSEL, 0, 0));
+			status->iEOLMode = GetScintillaEOLMode(iEOLMode);
+			bWarnLineEndings = IsButtonChecked(hwnd, IDC_WARNINCONSISTENTEOLS);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			bWarnLineEndings = IsButtonChecked(hwnd, IDC_WARNINCONSISTENTEOLS);
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+bool WarnLineEndingDlg(HWND hwnd, EditFileIOStatus *status) noexcept {
+	MessageBeep(MB_ICONEXCLAMATION);
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_WARNLINEENDS), hwnd, WarnLineEndingDlgProc, AsInteger<LPARAM>(status));
+	return iResult == IDOK;
+}
+
+void InitZoomLevelComboBox(HWND hwnd, int nCtlId, int zoomLevel) noexcept {
+	WCHAR tch[16];
+	int selIndex = -1;
+	static const uint16_t levelList[] = {
+		500, 450, 400, 350, 300, 250,
+		200, 175, 150, 125, 100, 75, 50, 25,
+	};
+
+	HWND hwndCtl = GetDlgItem(hwnd, nCtlId);
+	ComboBox_LimitText(hwndCtl, 8);
+	for (UINT i = 0; i < COUNTOF(levelList); i++) {
+		const int level = levelList[i];
+		if (zoomLevel == level) {
+			selIndex = i;
+		}
+		wsprintf(tch, L"%d%%", level);
+		ComboBox_AddString(hwndCtl, tch);
+	}
+
+	ComboBox_SetExtendedUI(hwndCtl, TRUE);
+	ComboBox_SetCurSel(hwndCtl, selIndex);
+	if (selIndex < 0) {
+		wsprintf(tch, L"%d%%", zoomLevel);
+		SetWindowText(hwndCtl, tch);
+	}
+}
+
+bool GetZoomLevelComboBoxValue(HWND hwnd, int nCtrId, int *zoomLevel) noexcept {
+	WCHAR tch[16];
+	GetDlgItemText(hwnd, nCtrId, tch, COUNTOF(tch));
+	return CRTStrToInt(tch, zoomLevel) && *zoomLevel >= SC_MIN_ZOOM_LEVEL && *zoomLevel <= SC_MAX_ZOOM_LEVEL;
+}
+
+static INT_PTR CALLBACK ZoomLevelDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		const int zoomLevel = SciCall_GetZoom();
+		InitZoomLevelComboBox(hwnd, IDC_ZOOMLEVEL, zoomLevel);
+		DarkMode_InitDialog(hwnd, lParam ? DialogRefData_RightBottom : DialogRefData_CenterParent);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+		case IDYES: {
+			int zoomLevel;
+			if (GetZoomLevelComboBoxValue(hwnd, IDC_ZOOMLEVEL, &zoomLevel)) {
+				SciCall_SetZoom(zoomLevel);
+			}
+			if (LOWORD(wParam) == IDOK) {
+				EndDialog(hwnd, IDOK);
+			}
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+void ZoomLevelDlg(HWND hwnd, bool bBottom) noexcept {
+	ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_ZOOMLEVEL), hwnd, ZoomLevelDlgProc, bBottom);
+}
+
+extern EditAutoCompletionConfig autoCompletionConfig;
+
+static INT_PTR CALLBACK AutoCompletionSettingsDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		int mask = autoCompletionConfig.iCompleteOption;
+		if (autoCompletionConfig.bIndentText) {
+			CheckDlgButton(hwnd, IDC_AUTO_INDENT_TEXT, BST_CHECKED);
+		}
+		if (mask & AutoCompletionOption_CloseTags) {
+			CheckDlgButton(hwnd, IDC_AUTO_CLOSE_TAGS, BST_CHECKED);
+		}
+		if (mask & AutoCompletionOption_CompleteWord) {
+			CheckDlgButton(hwnd, IDC_AUTO_COMPLETE_WORD, BST_CHECKED);
+		}
+		if (mask & AutoCompletionOption_ScanWordsInDocument) {
+			CheckDlgButton(hwnd, IDC_AUTOC_SCAN_DOCUMENT_WORDS, BST_CHECKED);
+		}
+		if (mask & AutoCompletionOption_OnlyWordsInDocument) {
+			CheckDlgButton(hwnd, IDC_AUTOC_ONLY_DOCUMENT_WORDS, BST_CHECKED);
+		}
+		if (mask & AutoCompletionOption_EnglishIMEModeOnly) {
+			CheckDlgButton(hwnd, IDC_AUTOC_ENGLISH_IME_ONLY, BST_CHECKED);
+		}
+
+		SetDlgItemInt(hwnd, IDC_AUTOC_VISIBLE_ITEM_COUNT, autoCompletionConfig.iVisibleItemCount, FALSE);
+		SendDlgItemMessage(hwnd, IDC_AUTOC_VISIBLE_ITEM_COUNT, EM_LIMITTEXT, 8, 0);
+
+		SetDlgItemInt(hwnd, IDC_AUTOC_MIN_WORD_LENGTH, autoCompletionConfig.iMinWordLength, FALSE);
+		SendDlgItemMessage(hwnd, IDC_AUTOC_MIN_WORD_LENGTH, EM_LIMITTEXT, 8, 0);
+
+		SetDlgItemInt(hwnd, IDC_AUTOC_MIN_NUMBER_LENGTH, autoCompletionConfig.iMinNumberLength, FALSE);
+		SendDlgItemMessage(hwnd, IDC_AUTOC_MIN_NUMBER_LENGTH, EM_LIMITTEXT, 8, 0);
+
+		WCHAR wch[32];
+		wsprintf(wch, L"%u ms", autoCompletionConfig.dwScanWordsTimeout);
+		SetDlgItemText(hwnd, IDC_AUTOC_SCAN_WORDS_TIMEOUT, wch);
+
+		mask = autoCompletionConfig.fCompleteScope;
+		if (mask & AutoCompleteScope_Commont) {
+			CheckDlgButton(hwnd, IDC_AUTO_COMPLETE_INSIDE_COMMONT, BST_CHECKED);
+		}
+		if (mask & AutoCompleteScope_String) {
+			CheckDlgButton(hwnd, IDC_AUTO_COMPLETE_INSIDE_STRING, BST_CHECKED);
+		}
+		if (mask & AutoCompleteScope_PlainText) {
+			CheckDlgButton(hwnd, IDC_AUTO_COMPLETE_INSIDE_PLAINTEXT, BST_CHECKED);
+		}
+
+		mask = autoCompletionConfig.fScanWordScope;
+		if (mask & AutoCompleteScope_Commont) {
+			CheckDlgButton(hwnd, IDC_SCAN_WORD_INSIDE_COMMONT, BST_CHECKED);
+		}
+		if (mask & AutoCompleteScope_String) {
+			CheckDlgButton(hwnd, IDC_SCAN_WORD_INSIDE_STRING, BST_CHECKED);
+		}
+		if (mask & AutoCompleteScope_PlainText) {
+			CheckDlgButton(hwnd, IDC_SCAN_WORD_INSIDE_PLAINTEXT, BST_CHECKED);
+		}
+
+		mask = autoCompletionConfig.fAutoCompleteFillUpMask;
+		if (mask & AutoCompleteFillUpMask_Enter) {
+			CheckDlgButton(hwnd, IDC_AUTOC_FILLUP_ENTER, BST_CHECKED);
+		}
+		if (mask & AutoCompleteFillUpMask_Tab) {
+			CheckDlgButton(hwnd, IDC_AUTOC_FILLUP_TAB, BST_CHECKED);
+		}
+		if (mask & AutoCompleteFillUpMask_Space) {
+			CheckDlgButton(hwnd, IDC_AUTOC_FILLUP_SPACE, BST_CHECKED);
+		}
+		if (mask & AutoCompleteFillUpMask_Punctuation) {
+			CheckDlgButton(hwnd, IDC_AUTOC_FILLUP_PUNCTUATION, BST_CHECKED);
+		}
+
+		SetDlgItemText(hwnd, IDC_AUTOC_FILLUP_PUNCTUATION_LIST, autoCompletionConfig.wszAutoCompleteFillUp);
+		SendDlgItemMessage(hwnd, IDC_AUTOC_FILLUP_PUNCTUATION_LIST, EM_LIMITTEXT, MAX_AUTO_COMPLETION_FILLUP_LENGTH, 0);
+
+		mask = autoCompletionConfig.fAutoInsertMask;
+		if (mask & AutoInsertMask_Parenthesis) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_PARENTHESIS, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_Brace) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_BRACE, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_SquareBracket) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_SQUARE_BRACKET, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_AngleBracket) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_ANGLE_BRACKET, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_DoubleQuote) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_DOUBLE_QUOTE, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_SingleQuote) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_SINGLE_QUOTE, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_Backtick) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_BACKTICK, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_SpaceAfterComma) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_SPACE_COMMA, BST_CHECKED);
+		}
+		if (mask & AutoInsertMask_SpaceAfterComment) {
+			CheckDlgButton(hwnd, IDC_AUTO_INSERT_SPACE_COMMENT, BST_CHECKED);
+		}
+
+		mask = autoCompletionConfig.iAsmLineCommentChar;
+		CheckRadioButton(hwnd, IDC_ASM_LINE_COMMENT_SEMICOLON, IDC_ASM_LINE_COMMENT_AT, IDC_ASM_LINE_COMMENT_SEMICOLON + mask);
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			autoCompletionConfig.bIndentText = IsButtonChecked(hwnd, IDC_AUTO_INDENT_TEXT);
+
+			int mask = AutoCompletionOption_None;
+			if (IsButtonChecked(hwnd, IDC_AUTO_CLOSE_TAGS)) {
+				mask |= AutoCompletionOption_CloseTags;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_COMPLETE_WORD)) {
+				mask |= AutoCompletionOption_CompleteWord;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOC_SCAN_DOCUMENT_WORDS)) {
+				mask |= AutoCompletionOption_ScanWordsInDocument;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOC_ONLY_DOCUMENT_WORDS)) {
+				mask |= AutoCompletionOption_OnlyWordsInDocument;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOC_ENGLISH_IME_ONLY)) {
+				mask |= AutoCompletionOption_EnglishIMEModeOnly;
+			}
+			autoCompletionConfig.iCompleteOption = mask;
+
+			mask = GetDlgItemInt(hwnd, IDC_AUTOC_VISIBLE_ITEM_COUNT, nullptr, FALSE);
+			autoCompletionConfig.iVisibleItemCount = max(mask, MIN_AUTO_COMPLETION_VISIBLE_ITEM_COUNT);
+
+			mask = GetDlgItemInt(hwnd, IDC_AUTOC_MIN_WORD_LENGTH, nullptr, FALSE);
+			autoCompletionConfig.iMinWordLength = max(mask, MIN_AUTO_COMPLETION_WORD_LENGTH);
+
+			mask = GetDlgItemInt(hwnd, IDC_AUTOC_MIN_NUMBER_LENGTH, nullptr, FALSE);
+			autoCompletionConfig.iMinNumberLength = max(mask, MIN_AUTO_COMPLETION_NUMBER_LENGTH);
+
+			WCHAR wch[32];
+			GetDlgItemText(hwnd, IDC_AUTOC_SCAN_WORDS_TIMEOUT, wch, COUNTOF(wch));
+			if (CRTStrToInt(wch, &mask)) {
+				autoCompletionConfig.dwScanWordsTimeout = max(mask, AUTOC_SCAN_WORDS_MIN_TIMEOUT);
+			}
+
+			mask = AutoCompleteScope_Other;
+			if (IsButtonChecked(hwnd, IDC_AUTO_COMPLETE_INSIDE_COMMONT)) {
+				mask |= AutoCompleteScope_Commont;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_COMPLETE_INSIDE_STRING)) {
+				mask |= AutoCompleteScope_String;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_COMPLETE_INSIDE_PLAINTEXT)) {
+				mask |= AutoCompleteScope_PlainText;
+			}
+			autoCompletionConfig.fCompleteScope = mask;
+
+			mask = AutoCompleteScope_Other;
+			if (IsButtonChecked(hwnd, IDC_SCAN_WORD_INSIDE_COMMONT)) {
+				mask |= AutoCompleteScope_Commont;
+			}
+			if (IsButtonChecked(hwnd, IDC_SCAN_WORD_INSIDE_STRING)) {
+				mask |= AutoCompleteScope_String;
+			}
+			if (IsButtonChecked(hwnd, IDC_SCAN_WORD_INSIDE_PLAINTEXT)) {
+				mask |= AutoCompleteScope_PlainText;
+			}
+			autoCompletionConfig.fScanWordScope = mask;
+
+			mask = AutoCompleteFillUpMask_None;
+			if (IsButtonChecked(hwnd, IDC_AUTOC_FILLUP_ENTER)) {
+				mask |= AutoCompleteFillUpMask_Enter;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOC_FILLUP_TAB)) {
+				mask |= AutoCompleteFillUpMask_Tab;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOC_FILLUP_SPACE)) {
+				mask |= AutoCompleteFillUpMask_Space;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOC_FILLUP_PUNCTUATION)) {
+				mask |= AutoCompleteFillUpMask_Punctuation;
+			}
+
+			autoCompletionConfig.fAutoCompleteFillUpMask = mask;
+			GetDlgItemText(hwnd, IDC_AUTOC_FILLUP_PUNCTUATION_LIST, autoCompletionConfig.wszAutoCompleteFillUp, COUNTOF(autoCompletionConfig.wszAutoCompleteFillUp));
+
+			mask = AutoInsertMask_None;
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_PARENTHESIS)) {
+				mask |= AutoInsertMask_Parenthesis;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_BRACE)) {
+				mask |= AutoInsertMask_Brace;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_SQUARE_BRACKET)) {
+				mask |= AutoInsertMask_SquareBracket;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_ANGLE_BRACKET)) {
+				mask |= AutoInsertMask_AngleBracket;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_DOUBLE_QUOTE)) {
+				mask |= AutoInsertMask_DoubleQuote;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_SINGLE_QUOTE)) {
+				mask |= AutoInsertMask_SingleQuote;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_BACKTICK)) {
+				mask |= AutoInsertMask_Backtick;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_SPACE_COMMA)) {
+				mask |= AutoInsertMask_SpaceAfterComma;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTO_INSERT_SPACE_COMMENT)) {
+				mask |= AutoInsertMask_SpaceAfterComment;
+			}
+
+			autoCompletionConfig.fAutoInsertMask = mask;
+			autoCompletionConfig.iAsmLineCommentChar = GetCheckedRadioButton(hwnd, IDC_ASM_LINE_COMMENT_SEMICOLON, IDC_ASM_LINE_COMMENT_AT) - IDC_ASM_LINE_COMMENT_SEMICOLON;
+			EditCompleteUpdateConfig();
+			SciCall_SetAutoInsertMask(mask);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+bool AutoCompletionSettingsDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_AUTOCOMPLETION), hwnd, AutoCompletionSettingsDlgProc, 0);
+	return iResult == IDOK;
+}
+
+extern int iAutoSaveOption;
+extern DWORD dwAutoSavePeriod;
+
+static INT_PTR CALLBACK AutoSaveSettingsDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		if (iAutoSaveOption & AutoSaveOption_Periodic) {
+			CheckDlgButton(hwnd, IDC_AUTOSAVE_ENABLE, BST_CHECKED);
+		}
+		if (iAutoSaveOption & AutoSaveOption_Suspend) {
+			CheckDlgButton(hwnd, IDC_AUTOSAVE_SUSPEND, BST_CHECKED);
+		}
+		if (iAutoSaveOption & AutoSaveOption_Shutdown) {
+			CheckDlgButton(hwnd, IDC_AUTOSAVE_SHUTDOWN, BST_CHECKED);
+		}
+		if (iAutoSaveOption & AutoSaveOption_ManuallyDelete) {
+			CheckDlgButton(hwnd, IDC_AUTOSAVE_MANUALLYDELETE, BST_CHECKED);
+		}
+		if (iAutoSaveOption & AutoSaveOption_OverwriteCurrent) {
+			CheckDlgButton(hwnd, IDC_AUTOSAVE_OVERWRITECURRENT, BST_CHECKED);
+		}
+
+		WCHAR tch[32];
+		const UINT seconds = dwAutoSavePeriod / 1000;
+		const UINT milliseconds = dwAutoSavePeriod % 1000;
+		if (milliseconds) {
+			wsprintf(tch, L"%u.%03u", seconds, milliseconds);
+		} else {
+			wsprintf(tch, L"%u.0", seconds);
+		}
+		SetDlgItemText(hwnd, IDC_AUTOSAVE_PERIOD, tch);
+
+		DarkMode_InitDialog(hwnd);
+	};
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			int option = 0;
+			if (IsButtonChecked(hwnd, IDC_AUTOSAVE_ENABLE)) {
+				option |= AutoSaveOption_Periodic;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOSAVE_SUSPEND)) {
+				option |= AutoSaveOption_Suspend;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOSAVE_SHUTDOWN)) {
+				option |= AutoSaveOption_Shutdown;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOSAVE_MANUALLYDELETE)) {
+				option |= AutoSaveOption_ManuallyDelete;
+			}
+			if (IsButtonChecked(hwnd, IDC_AUTOSAVE_OVERWRITECURRENT)) {
+				option |= AutoSaveOption_OverwriteCurrent;
+			}
+			iAutoSaveOption = option;
+
+			WCHAR tch[32] = L"";
+			GetDlgItemText(hwnd, IDC_AUTOSAVE_PERIOD, tch, COUNTOF(tch));
+			float period = 0;
+			StrToFloat(tch, &period);
+			dwAutoSavePeriod = static_cast<int>(period * 1000);
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDC_AUTOSAVE_OPENFOLDER: {
+			LPCWSTR szFolder = AutoSave_GetDefaultFolder();
+			OpenContainingFolder(hwnd, szFolder, false);
+		} break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+bool AutoSaveSettingsDlg(HWND hwnd) noexcept {
+	const INT_PTR iResult = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_AUTOSAVE), hwnd, AutoSaveSettingsDlgProc, 0);
+	return iResult == IDOK;
+}
+
+//=============================================================================
+//
+// InfoBoxDlgProc()
+//
+//
+namespace {
+
+struct INFOBOX {
+	LPWSTR lpstrMessage;
+	LPCWSTR lpstrSetting;
+	HICON hIcon;
+	UINT uType;
+	bool bDisableCheckBox;
+};
+
+enum SuppressMmessage {
+	SuppressMmessage_None = 0,
+	SuppressMmessage_Suppress,
+	SuppressMmessage_Never,
+};
+
+INT_PTR CALLBACK InfoBoxDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
+		const INFOBOX * const lpib = AsPointer<const INFOBOX *>(lParam);
+
+		SendDlgItemMessage(hwnd, IDC_INFOBOXICON, STM_SETICON, AsInteger<WPARAM>(lpib->hIcon), 0);
+		HWND hwndOK = GetDlgItem(hwnd, IDOK);
+		HWND hwndCancel = GetDlgItem(hwnd, IDCANCEL);
+		if (lpib->uType != MB_YESNO) {
+			if (lpib->uType == MB_OK) {
+				RECT rc;
+				GetWindowRect(hwndCancel, &rc);
+				DestroyWindow(hwndCancel);
+				MapWindowPoints(nullptr, hwnd, reinterpret_cast<LPPOINT>(&rc), 2);
+				SetWindowPos(hwndOK, nullptr, rc.left, rc.top, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+			}
+			hwndOK = GetDlgItem(hwnd, IDYES);
+			hwndCancel = GetDlgItem(hwnd, IDNO);
+		}
+		DestroyWindow(hwndOK);
+		DestroyWindow(hwndCancel);
+		SetDlgItemText(hwnd, IDC_INFOBOXTEXT, lpib->lpstrMessage);
+		if (lpib->bDisableCheckBox) {
+			EnableWindow(GetDlgItem(hwnd, IDC_INFOBOXCHECK), FALSE);
+		}
+		DarkMode_InitDialog(hwnd, DialogRefData_MessageBox);
+	}
+	return TRUE;
+
+	case WM_CTLCOLORSTATIC: {
+		const DWORD dwId = GetWinCtrlID(AsPointer<HWND>(lParam));
+
+		if (dwId >= IDC_INFOBOXRECT && dwId <= IDC_INFOBOXTEXT) {
+			HDC hdc = AsPointer<HDC>(wParam);
+			SetBkMode(hdc, TRANSPARENT);
+			return AsInteger<LONG_PTR>(GetSysColorBrush(COLOR_WINDOW));
+		}
+	}
+	break;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+		case IDCANCEL:
+		case IDYES:
+		case IDNO:
+			if (IsButtonChecked(hwnd, IDC_INFOBOXCHECK)) {
+				const INFOBOX * const lpib = AsPointer<const INFOBOX *>(GetWindowLongPtr(hwnd, DWLP_USER));
+				IniSetBool(INI_SECTION_NAME_SUPPRESSED_MESSAGES, lpib->lpstrSetting, true);
+			}
+			EndDialog(hwnd, LOWORD(wParam));
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+}
+
+//=============================================================================
+//
+// InfoBox()
+//
+//
+INT_PTR InfoBox(UINT uType, LPCWSTR lpstrSetting, UINT uidMessage, ...) noexcept {
+	const UINT icon = uType & MB_ICONMASK;
+	uType &= MB_TYPEMASK;
+	// notepad420 fork 默认：到头/到尾的「从头开始重新搜索」提示默认静默回绕（Notepad++ 风格）。
+	// ini [Suppressed Messages] 显式写 0 恢复旧弹框，非 0 维持抑制；缺省视为已抑制。
+	const int defaultMode = (lpstrSetting != nullptr
+		&& (StrEqual(lpstrSetting, L"MsgFindWrap1") || StrEqual(lpstrSetting, L"MsgFindWrap2")))
+		? SuppressMmessage_Suppress : SuppressMmessage_None;
+	const SuppressMmessage iMode = static_cast<SuppressMmessage>(IniGetInt(INI_SECTION_NAME_SUPPRESSED_MESSAGES, lpstrSetting, defaultMode));
+	if (StrNotEmpty(lpstrSetting) && iMode == SuppressMmessage_Suppress) {
+		return (uType == MB_YESNO) ? IDYES : IDOK;
+	}
+
+	WCHAR wchFormat[512];
+	GetString(uidMessage, wchFormat, COUNTOF(wchFormat));
+
+	WCHAR lpstrMessage[1024];
+	va_list va;
+	va_start(va, uidMessage);
+	// UINT len = wvsprintf(lpstrMessage, wchFormat, va);
+	wvsprintf(lpstrMessage, wchFormat, va);
+	va_end(va);
+
+	INFOBOX ib;
+	ib.lpstrMessage = lpstrMessage;
+	ib.lpstrSetting = lpstrSetting;
+	ib.uType = uType;
+
+	HICON hIcon = nullptr;
+	LPCWSTR lpszIcon = (icon == MB_ICONINFORMATION) ? IDI_INFORMATION : ((icon == MB_ICONQUESTION) ? IDI_QUESTION : IDI_EXCLAMATION);
+	HWND hwnd = GetMsgBoxParent();
+	const UINT dpi = GetWindowDPI(hwnd);
+	const int size = SystemMetricsForDpi(SM_CXICON, dpi);
+	LoadIconWithScaleDown(nullptr, lpszIcon, size, size, &hIcon);
+	ib.hIcon = hIcon ? hIcon : LoadIcon(nullptr, lpszIcon); // old standard icon
+
+	ib.bDisableCheckBox = StrIsEmpty(lpstrSetting) || iMode == SuppressMmessage_Never;
+	MessageBeep(MB_ICONEXCLAMATION);
+	const INT_PTR result = ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_INFOBOX), hwnd, InfoBoxDlgProc, AsInteger<LPARAM>(&ib));
+	DestroyIcon(hIcon);
+
+#if 0// task dialog
+	// pad message to multiline to make the dialog looks better
+	lpstrMessage[len++] = '\r';
+	lpstrMessage[len++] = '\n';
+	lpstrMessage[len++] = '\0';
+
+	TASKDIALOGCONFIG config {};
+	config.cbSize = sizeof(TASKDIALOGCONFIG);
+	config.hwndParent = GetMsgBoxParent();
+	config.hInstance = g_hInstance;
+	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+	config.cxWidth = 200; // in dialog unit
+	config.pszWindowTitle = MAKEINTRESOURCE(IDS_APPTITLE);
+	config.pszContent = lpstrMessage;
+	// checkbox and verification text seems not center aligned
+	// config.pszVerificationText = MAKEINTRESOURCE(IDS_DONT_SHOW_AGAIN);
+	config.pszVerificationText = L"&Don't show this message again.";
+	config.dwCommonButtons = (uType == MB_YESNO) ? (TDCBF_YES_BUTTON | TDCBF_NO_BUTTON) : ((uType == MB_OKCANCEL) ? (TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON) : TDCBF_OK_BUTTON);
+	HICON hMainIcon = nullptr;
+	if (icon != MB_ICONQUESTION) {
+		config.pszMainIcon = (icon == MB_ICONEXCLAMATION) ? TD_WARNING_ICON : TD_INFORMATION_ICON;
+	} else {
+		config.dwFlags |= TDF_USE_HICON_MAIN;
+		const UINT dpi = GetWindowDPI(config.hwndParent);
+		const int size = SystemMetricsForDpi(SM_CXICON, dpi);
+		LoadIconWithScaleDown(nullptr, IDI_QUESTION, size, size, &hMainIcon);
+		config.hMainIcon = hMainIcon ? hMainIcon : LoadIcon(nullptr, IDI_QUESTION); // old standard icon
+	}
+
+	int result = 0;
+	BOOL checked = FALSE;
+	const bool bDisableCheckBox = StrIsEmpty(lpstrSetting) || iMode == SuppressMmessage_Never;
+	MessageBeep(MB_ICONEXCLAMATION);
+	TaskDialogIndirect(&config, &result, nullptr, (bDisableCheckBox ? nullptr : &checked));
+	DestroyIcon(hMainIcon);
+	if (checked) {
+		IniSetBool(INI_SECTION_NAME_SUPPRESSED_MESSAGES, lpstrSetting, true);
+	}
+#endif // task dialog
+
+	return result;
+}
+
+/*
+HKEY_CLASSES_ROOT\*\shell\notepad420
+	(Default)				REG_SZ		Edit with notepad420
+	icon					REG_SZ		notepad420.exe
+	command
+		(Default)			REG_SZ		"notepad420.exe" "%1"
+
+HKEY_CLASSES_ROOT\Applications\notepad420.exe
+	AppUserModelID			REG_SZ		notepad420 Text Editor
+	FriendlyAppName			REG_SZ		notepad420 Text Editor
+	shell\open\command
+		(Default)			REG_SZ		"notepad420.exe" "%1"
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\notepad.exe
+	(Default)				REG_SZ			notepad420.exe
+	Debugger								REG_SZ		"notepad420.exe" /z
+	UseFilter								REG_DWORD	0
+*/
+extern bool fIsElevated;
+extern TripleBoolean flagUseSystemMRU;
+extern WCHAR g_wchAppUserModelID[64];
+
+namespace {
+
+enum {
+	SystemIntegration_ContextMenu = 1,
+	SystemIntegration_JumpList = 2,
+	SystemIntegration_ReplaceNotepad = 4,
+	SystemIntegration_RestoreNotepad = 8,
+};
+
+struct SystemIntegrationInfo {
+	WCHAR lpszText[MAX_PATH/2];
+	WCHAR lpszName[MAX_PATH/2];
+};
+
+#define NP2RegSubKey_ReplaceNotepad	L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\notepad.exe"
+#if defined(_WIN64)
+#define samDesired_WOW64_64KEY	0
+#else
+// uses 64-bit registry on 64-bit Windows prior Windows 7
+#define samDesired_WOW64_64KEY	KEY_WOW64_64KEY
+#endif
+
+DWORD GetSystemIntegrationStatus(SystemIntegrationInfo &info) noexcept {
+	DWORD mask = 0;
+	WCHAR tchModule[MAX_PATH];
+	WCHAR command[MAX_PATH];
+	GetModuleFileName(nullptr, tchModule, COUNTOF(tchModule));
+
+	// context menu
+	HKEY hKey;
+	LSTATUS status = RegOpenKeyEx(HKEY_CLASSES_ROOT, NP2RegSubKey_ContextMenu, 0, KEY_READ, &hKey);
+	if (status == ERROR_SUCCESS) {
+		if (!Registry_GetDefaultString(hKey, info.lpszText)) {
+			info.lpszText[0] = L'\0';
+		}
+		if (Registry_GetSubKeyDefaultString(hKey, L"command", command)) {
+			if (StrStrI(command, tchModule) != nullptr) {
+				mask |= SystemIntegration_ContextMenu;
+			}
+		}
+		RegCloseKey(hKey);
+	}
+
+	// jump list
+	status = RegOpenKeyEx(HKEY_CLASSES_ROOT, NP2RegSubKey_JumpList, 0, KEY_READ, &hKey);
+	if (status == ERROR_SUCCESS) {
+		if (!Registry_GetString(hKey, L"FriendlyAppName", info.lpszName)) {
+			info.lpszName[0] = L'\0';
+		}
+		if (Registry_GetString(hKey, L"AppUserModelID", command)) {
+			if (StrEqual(command, g_wchAppUserModelID)) {
+				if (Registry_GetSubKeyDefaultString(hKey, L"shell\\open\\command", command)) {
+					if (StrStrI(command, tchModule) != nullptr) {
+						mask |= SystemIntegration_JumpList;
+					}
+				}
+			}
+		}
+		RegCloseKey(hKey);
+	}
+
+	// replace Windows Notepad
+	if (Registry_GetStringEx(HKEY_LOCAL_MACHINE, NP2RegSubKey_ReplaceNotepad, L"Debugger", command, RRF_RT_REG_SZ | samDesired_WOW64_64KEY)) {
+		if (StrStrI(command, tchModule) != nullptr) {
+			mask |= SystemIntegration_ReplaceNotepad;
+		}
+	}
+
+	return mask;
+}
+
+void UpdateSystemIntegrationStatus(DWORD mask, const SystemIntegrationInfo &info) noexcept {
+	WCHAR tchModule[MAX_PATH];
+	GetModuleFileName(nullptr, tchModule, COUNTOF(tchModule));
+	WCHAR command[300];
+	wsprintf(command, L"\"%s\" \"%%1\"", tchModule);
+
+	// context menu
+	// delete the old one: HKEY_CLASSES_ROOT\*\shell\Notepad4.exe
+	//RegDeleteTree(HKEY_CLASSES_ROOT, NP2RegSubKey_ContextMenu L".exe");
+	if (mask & SystemIntegration_ContextMenu) {
+		HKEY hSubKey;
+		const LSTATUS status = Registry_CreateKey(HKEY_CLASSES_ROOT, NP2RegSubKey_ContextMenu L"\\command", &hSubKey);
+		if (status == ERROR_SUCCESS) {
+			HKEY hKey;
+			RegOpenKeyEx(HKEY_CLASSES_ROOT, NP2RegSubKey_ContextMenu, 0, KEY_WRITE, &hKey);
+			Registry_SetDefaultString(hKey, info.lpszText);
+			Registry_SetString(hKey, L"icon", tchModule);
+			Registry_SetDefaultString(hSubKey, command);
+			RegCloseKey(hKey);
+			RegCloseKey(hSubKey);
+		}
+	} else {
+		RegDeleteTree(HKEY_CLASSES_ROOT, NP2RegSubKey_ContextMenu);
+	}
+
+	// jump list
+	if (mask & SystemIntegration_JumpList) {
+		HKEY hSubKey;
+		const LSTATUS status = Registry_CreateKey(HKEY_CLASSES_ROOT, NP2RegSubKey_JumpList L"\\shell\\open\\command", &hSubKey);
+		if (status == ERROR_SUCCESS) {
+			HKEY hKey;
+			RegOpenKeyEx(HKEY_CLASSES_ROOT, NP2RegSubKey_JumpList, 0, KEY_WRITE, &hKey);
+			Registry_SetString(hKey, L"AppUserModelID", g_wchAppUserModelID);
+			Registry_SetString(hKey, L"FriendlyAppName", info.lpszName);
+			Registry_SetDefaultString(hSubKey, command);
+			RegCloseKey(hKey);
+			RegCloseKey(hSubKey);
+
+			if (flagUseSystemMRU != TripleBoolean_True) {
+				flagUseSystemMRU = TripleBoolean_True;
+				IniSetBoolEx(INI_SECTION_NAME_FLAGS, L"ShellUseSystemMRU", true, true);
+			}
+		}
+	} else {
+		RegDeleteTree(HKEY_CLASSES_ROOT, NP2RegSubKey_JumpList);
+	}
+
+	// replace Windows Notepad
+	if (mask & SystemIntegration_ReplaceNotepad) {
+		HKEY hKey;
+		const LSTATUS status = Registry_CreateKey(HKEY_LOCAL_MACHINE, NP2RegSubKey_ReplaceNotepad, &hKey, samDesired_WOW64_64KEY);
+		if (status == ERROR_SUCCESS) {
+			wsprintf(command, L"\"%s\" /z", tchModule);
+			Registry_SetDefaultString(hKey, tchModule);
+			Registry_SetString(hKey, L"Debugger", command);
+			Registry_SetInt(hKey, L"UseFilter", 0);
+			RegDeleteValue(hKey, L"AppExecutionAliasRedirectPackages");
+			RegDeleteValue(hKey, L"AppExecutionAliasRedirect");
+#if 0
+			WCHAR num[2] = { L'0', L'\0' };
+			for (int index = 0; index < 3; index++, num[0]++) {
+#if 1
+				RegDeleteTree(hKey, num);
+#else
+				HKEY hSubKey;
+				status = Registry_CreateKey(hKey, num, &hSubKey);
+				if (status == ERROR_SUCCESS) {
+					Registry_SetInt(hSubKey, L"AppExecutionAliasRedirect", 1);
+					Registry_SetString(hSubKey, L"AppExecutionAliasRedirectPackages", L"*");
+					Registry_SetString(hSubKey, L"FilterFullPath", tchModule);
+					RegCloseKey(hSubKey);
+				}
+#endif
+			}
+#endif
+			RegCloseKey(hKey);
+		}
+	} else if (mask & SystemIntegration_RestoreNotepad) {
+#if 0
+		RegDeleteTree(HKEY_LOCAL_MACHINE, NP2RegSubKey_ReplaceNotepad);
+#else
+		// on Windows 11, all keys were created by the system, we should not delete them.
+		HKEY hKey;
+		const LSTATUS status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, NP2RegSubKey_ReplaceNotepad, 0, KEY_WRITE | samDesired_WOW64_64KEY, &hKey);
+		if (status == ERROR_SUCCESS) {
+			RegDeleteValue(hKey, nullptr);
+			RegDeleteValue(hKey, L"Debugger");
+			Registry_SetInt(hKey, L"UseFilter", 1);
+			Registry_SetInt(hKey, L"AppExecutionAliasRedirect", 1);
+			Registry_SetString(hKey, L"AppExecutionAliasRedirectPackages", L"*");
+#if 0
+			GetWindowsDirectory(tchModule, COUNTOF(tchModule));
+			LPCWSTR const suffix[] = {
+				L"System32\\notepad.exe",
+				L"SysWOW64\\notepad.exe",
+				L"notepad.exe",
+			};
+			WCHAR num[2] = { L'0', L'\0' };
+			for (int index = 0; index < 3; index++, num[0]++) {
+				HKEY hSubKey;
+				status = RegOpenKeyEx(hKey, num, 0, KEY_WRITE, &hSubKey);
+				if (status == ERROR_SUCCESS) {
+					PathCombine(command, tchModule, suffix[index]);
+					Registry_SetInt(hSubKey, L"AppExecutionAliasRedirect", 1);
+					Registry_SetString(hSubKey, L"AppExecutionAliasRedirectPackages", L"*");
+					Registry_SetString(hSubKey, L"FilterFullPath", command);
+					RegCloseKey(hSubKey);
+				}
+			}
+#endif
+			RegCloseKey(hKey);
+		}
+#endif
+	}
+}
+
+INT_PTR CALLBACK SystemIntegrationDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		SystemIntegrationInfo info;
+		info.lpszText[0] = L'\0';
+		info.lpszName[0] = L'\0';
+		const DWORD mask = GetSystemIntegrationStatus(info);
+		SetWindowLongPtr(hwnd, DWLP_USER, mask);
+
+		HWND hwndCtl = GetDlgItem(hwnd, IDC_CONTEXT_MENU_TEXT);
+		if (StrIsEmpty(info.lpszText)) {
+			GetString(IDS_LINKDESCRIPTION, info.lpszText, COUNTOF(info.lpszText));
+		}
+		Edit_SetText(hwndCtl, info.lpszText);
+
+		HWND hwndName = GetDlgItem(hwnd, IDC_APPLICATION_NAME);
+		Edit_SetText(hwndName, StrIsEmpty(info.lpszName)? g_wchAppUserModelID : info.lpszName);
+
+		if (mask & SystemIntegration_ContextMenu) {
+			CheckDlgButton(hwnd, IDC_ENABLE_CONTEXT_MENU, BST_CHECKED);
+		}
+		if (mask & SystemIntegration_JumpList) {
+			CheckDlgButton(hwnd, IDC_ENABLE_JUMP_LIST, BST_CHECKED);
+		}
+		if (mask & SystemIntegration_ReplaceNotepad) {
+			CheckDlgButton(hwnd, IDC_REPLACE_WINDOWS_NOTEPAD, BST_CHECKED);
+		}
+
+		if (IsVistaAndAbove() && !fIsElevated) {
+			EnableWindow(GetDlgItem(hwnd, IDC_ENABLE_CONTEXT_MENU), FALSE);
+			Edit_SetReadOnly(hwndCtl, TRUE);
+			EnableWindow(GetDlgItem(hwnd, IDC_ENABLE_JUMP_LIST), FALSE);
+			Edit_SetReadOnly(hwndName, TRUE);
+			EnableWindow(GetDlgItem(hwnd, IDC_REPLACE_WINDOWS_NOTEPAD), FALSE);
+		}
+
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK: {
+			if (IsWindowEnabled(GetDlgItem(hwnd, IDC_ENABLE_CONTEXT_MENU))) {
+				DWORD mask = 0;
+				if (IsButtonChecked(hwnd, IDC_ENABLE_CONTEXT_MENU)) {
+					mask |= SystemIntegration_ContextMenu;
+				}
+				if (IsButtonChecked(hwnd, IDC_ENABLE_JUMP_LIST)) {
+					mask |= SystemIntegration_JumpList;
+				}
+				if (IsButtonChecked(hwnd, IDC_REPLACE_WINDOWS_NOTEPAD)) {
+					mask |= SystemIntegration_ReplaceNotepad;
+				} else {
+					// don't remove third party Notepad replacement.
+					const LONG_PTR prev = GetWindowLongPtr(hwnd, DWLP_USER);
+					if (prev & SystemIntegration_ReplaceNotepad) {
+						mask |= SystemIntegration_RestoreNotepad;
+					}
+				}
+
+				SystemIntegrationInfo info;
+				GetDlgItemText(hwnd, IDC_CONTEXT_MENU_TEXT, info.lpszText, COUNTOF(info.lpszText));
+				TrimString(info.lpszText);
+
+				GetDlgItemText(hwnd, IDC_APPLICATION_NAME, info.lpszName, COUNTOF(info.lpszName));
+				TrimString(info.lpszName);
+
+				UpdateSystemIntegrationStatus(mask, info);
+			}
+			EndDialog(hwnd, IDOK);
+		}
+		break;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			break;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+}
+
+void SystemIntegrationDlg(HWND hwnd) noexcept {
+	ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_SYSTEM_INTEGRATION), hwnd, SystemIntegrationDlgProc, 0);
+}
