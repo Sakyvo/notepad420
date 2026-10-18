@@ -304,6 +304,14 @@ inline void SciCall_SetSel(Sci_Position anchor, Sci_Position caret) noexcept {
 	SciCall(SCI_SETSEL, anchor, caret);
 }
 
+inline Sci_Line SciCall_VisibleFromDocLine(Sci_Line docLine) noexcept {
+	return SciCall(SCI_VISIBLEFROMDOCLINE, docLine, 0);
+}
+
+inline Sci_Line SciCall_LinesOnScreen() noexcept {
+	return SciCall(SCI_LINESONSCREEN, 0, 0);
+}
+
 inline void SciCall_GotoPos(Sci_Position caret) noexcept {
 	SciCall(SCI_GOTOPOS, caret, 0);
 }
@@ -422,6 +430,11 @@ inline Sci_Position SciCall_FindColumn(Sci_Line line, Sci_Position column) noexc
 
 inline Sci_Position SciCall_PositionFromPoint(int x, int y) noexcept {
 	return SciCall(SCI_POSITIONFROMPOINT, x, y);
+}
+
+// -1 when the point is outside the text window or in virtual space.
+inline Sci_Position SciCall_PositionFromPointClose(int x, int y) noexcept {
+	return SciCall(SCI_POSITIONFROMPOINTCLOSE, x, y);
 }
 
 inline int SciCall_PointXFromPosition(Sci_Position pos) noexcept {

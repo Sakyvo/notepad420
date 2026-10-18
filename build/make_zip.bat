@@ -145,7 +145,7 @@ IF /I "%COMPILER%" == "MSVC" (
 TITLE Creating %ZIP_NAME%.zip...
 CALL :SUBMSG "INFO" "Creating %ZIP_NAME%.zip..."
 
-SET "ZIP_OUT_DIR=..\.target"
+SET "ZIP_OUT_DIR=..\.target\.distribution\zip"
 IF NOT EXIST "%ZIP_OUT_DIR%" MD "%ZIP_OUT_DIR%"
 IF EXIST "%ZIP_OUT_DIR%\%ZIP_NAME%.zip" DEL /F /Q "%ZIP_OUT_DIR%\%ZIP_NAME%.zip"
 SET "TEMP_ZIP_DIR=..\.target\temp\zip"
@@ -163,7 +163,7 @@ IF "%WITH_LOCALE%" == "1" (
 
 PUSHD "%TEMP_ZIP_DIR%"
 RENAME *.ini *.ini-default
-"%SEVENZIP%" a -tzip -mx=9 "../../%ZIP_NAME%.zip" "*" >NUL
+"%SEVENZIP%" a -tzip -mx=9 "..\..\.distribution\zip\%ZIP_NAME%.zip" "*" >NUL
 POPD
 
 IF %ERRORLEVEL% NEQ 0 (

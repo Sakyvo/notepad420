@@ -179,37 +179,55 @@ std::wstring LocalNotepad420Path() {
 	return path + L"notepad420.exe";
 }
 
-int RunReplaceOperation(std::wstring &error) {
+namespace {
+
+void Tick(ReplacerOps::ProgressFn progress, unsigned pos, unsigned range) {
+	if (progress != nullptr) {
+		progress(pos, range);
+	}
+}
+
+}
+
+int RunReplaceOperation(std::wstring &error, ProgressFn progress) {
 	error.clear();
 	if (!PathFileExistsW(LocalNotepad420Path().c_str())) {
 		error = L"同目录下找不到 notepad420.exe,无法替换。";
 		return 4;
 	}
+	const unsigned range = static_cast<unsigned>(g_targets.size()) + 4;
+	unsigned pos = 0;
 	for (const std::wstring &t : g_targets) {
 		if (!ReplaceOne(t, error)) {
 			return 4;
 		}
+		Tick(progress, ++pos, range);
 	}
 	DefaultApp::ActionReport ifeo = DefaultApp::RemoveNp3IfeoHijacks();
 	if (!ifeo.Ok()) {
 		error = L"解除 IFEO 劫持失败:" + ifeo.error;
 		return 5;
 	}
+	Tick(progress, ++pos, range);
 	DefaultApp::ActionReport uc = DefaultApp::RewriteNp3UserChoices();
 	if (!uc.Ok()) {
 		error = L"重写文件关联失败:" + uc.error;
 		return 5;
 	}
+	Tick(progress, ++pos, range);
 	std::wstring progidError;
 	if (DefaultApp::WriteOurProgId(LocalNotepad420Path(), progidError) != ERROR_SUCCESS) {
 		error = L"ProgId 写入失败:" + progidError;
 		return 5;
 	}
-	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+	Tick(progress, ++pos, range);
+	// 顶层窗口广播;FLUSHNOWAIT 让 shell 异步刷新,某窗口挂起也不再阻塞本线程(006 第四轮)。
+	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, nullptr, nullptr);
+	Tick(progress, ++pos, range);
 	return 0;
 }
 
-int RunEditorOperation(std::wstring &error) {
+int RunEditorOperation(std::wstring &error, ProgressFn progress) {
 	error.clear();
 	std::wstring envError;
 	const DWORD rc = AclGuard::SetUserEditors(LocalNotepad420Path(), g_editorBackupKey, envError);
@@ -217,11 +235,14 @@ int RunEditorOperation(std::wstring &error) {
 		error = L"EDITOR/VISUAL 写入失败:" + envError;
 		return 6;
 	}
+	Tick(progress, 1, 1);
 	return 0;
 }
 
-int RunAssociateOperation(std::wstring &error) {
+int RunAssociateOperation(std::wstring &error, ProgressFn progress) {
 	error.clear();
+	const unsigned range = static_cast<unsigned>(DefaultApp::kAssociateExtsCount) + 1;
+	unsigned pos = 0;
 	for (size_t i = 0; i < DefaultApp::kAssociateExtsCount; ++i) {
 		const wchar_t *ext = DefaultApp::kAssociateExts[i];
 		std::wstring extError;
@@ -229,35 +250,44 @@ int RunAssociateOperation(std::wstring &error) {
 			error = std::wstring(ext) + L": " + extError;
 			return 5;
 		}
+		Tick(progress, ++pos, range);
 	}
-	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, nullptr, nullptr);
+	Tick(progress, ++pos, range);
 	return 0;
 }
 
-int RunRestoreOperation(std::wstring &error) {
+int RunRestoreOperation(std::wstring &error, ProgressFn progress) {
 	error.clear();
+	const unsigned range = static_cast<unsigned>(g_targets.size()) + 4;
+	unsigned pos = 0;
 	for (const std::wstring &t : g_targets) {
 		if (!RestoreOne(t, error)) {
 			return 4;
 		}
+		Tick(progress, ++pos, range);
 	}
 	DefaultApp::ActionReport uc = DefaultApp::CleanupOurUserChoices();
 	if (!uc.Ok()) {
 		error = L"清理文件关联失败:" + uc.error;
 		return 5;
 	}
+	Tick(progress, ++pos, range);
 	std::wstring progidError;
 	if (DefaultApp::DeleteOurProgId(progidError) != ERROR_SUCCESS) {
 		error = L"ProgId 回收失败:" + progidError;
 		return 5;
 	}
-	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+	Tick(progress, ++pos, range);
+	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, nullptr, nullptr);
+	Tick(progress, ++pos, range);
 	std::wstring envError;
 	AclGuard::RestoreUserEditors(g_editorBackupKey, envError);
 	if (!envError.empty()) {
 		error = L"EDITOR 回退失败——" + envError;
 		return 6;
 	}
+	Tick(progress, ++pos, range);
 	return 0;
 }
 

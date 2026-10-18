@@ -260,7 +260,7 @@ BEGIN
 			MENUITEM "&Copy Line\tCtrl+Shift+C",		IDM_EDIT_COPYLINE
 			MENUITEM "D&elete Line\tCtrl+Shift+D",		IDM_EDIT_DELETELINE
 			MENUITEM SEPARATOR
-			MENUITEM "&Join Lines\tCtrl+J",				IDM_EDIT_JOINLINES
+			MENUITEM "&Join Lines",						IDM_EDIT_JOINLINES
 			MENUITEM "&Split Lines\tCtrl+I",			IDM_EDIT_SPLITLINES
 			MENUITEM "Column &Wrap...",					IDM_EDIT_COLUMNWRAP
 			MENUITEM "Join &Paragraphs\tCtrl+Shift+J",	IDM_EDIT_JOINLINESEX
@@ -573,6 +573,19 @@ BEGIN
 	END
 	POPUP "Sett&ings"
 	BEGIN
+		POPUP "At Start&up"
+		BEGIN
+			POPUP "Default &Cursor Position"
+			BEGIN
+				MENUITEM "Document &Start",			IDM_SET_CARETPOS_START
+				MENUITEM "Document &End",				IDM_SET_CARETPOS_END
+			END
+			POPUP "Default &View Position"
+			BEGIN
+				MENUITEM "Document &Start",			IDM_SET_VIEWPOS_START
+				MENUITEM "Document &End",				IDM_SET_VIEWPOS_END
+			END
+		END
 		MENUITEM "Insert Tabs as &Spaces",			IDM_VIEW_TABSASSPACES
 		MENUITEM "&Tab Settings...\tCtrl+T",		IDM_VIEW_TABSETTINGS
 		MENUITEM "Word &Wrap Settings...",			IDM_VIEW_WORDWRAPSETTINGS
@@ -657,11 +670,14 @@ BEGIN
 			MENUITEM "&Minimize notepad420",			IDM_VIEW_ESCMINIMIZE
 			MENUITEM "E&xit notepad420",				IDM_VIEW_ESCEXIT
 		END
+		MENUITEM SEPARATOR
+		MENUITEM "Ctrl+J Inserts New&line",			IDM_VIEW_CTRLJ_NEWLINE
 		POPUP "Other Sett&ings"
 		BEGIN
 			MENUITEM "Remember Recent &Files",		IDM_VIEW_NOSAVERECENT
 			MENUITEM "Remember &Search Options",	IDM_VIEW_NOSAVEFINDREPL
 		END
+		MENUITEM "&Paste Image Cache Management...",	IDM_SET_PASTE_CACHE_MGR
 		MENUITEM SEPARATOR
 		POPUP "A&dvanced Settings"
 		BEGIN
@@ -692,6 +708,8 @@ BEGIN
 				MENUITEM "&Right to Left",			IDM_SET_BIDIRECTIONAL_R2L
 			END
 			MENUITEM "Use &Inline Mode IME",		IDM_SET_USE_INLINE_IME
+			MENUITEM SEPARATOR
+			MENUITEM "Markdown List Auto-&Complete",	IDM_SET_MD_LIST_AUTOCOMPLETE
 			MENUITEM SEPARATOR
 			MENUITEM "&System Integration...",		IDM_SET_SYSTEM_INTEGRATION
 			MENUITEM "&Open notepad420.ini\tCtrl+F7",	CMD_OPENINIFILE
@@ -899,7 +917,7 @@ BEGIN
     "I",            IDM_FILE_OPENFAV,           VIRTKEY, ALT, NOINVERT
     "I",            IDM_EDIT_TITLECASE,         VIRTKEY, CONTROL, ALT, NOINVERT
     "I",            IDM_VIEW_HIGHLIGHTCURRENTLINE_BACK, VIRTKEY, SHIFT, CONTROL, NOINVERT
-    "J",            IDM_EDIT_JOINLINES,         VIRTKEY, CONTROL, NOINVERT
+    "J",            CMD_CTRLJ_ENTER,            VIRTKEY, CONTROL, NOINVERT
     "J",            IDM_EDIT_ALIGN,             VIRTKEY, ALT, NOINVERT
     "J",            IDM_EDIT_JOINLINESEX,       VIRTKEY, SHIFT, CONTROL, NOINVERT
     "K",            IDM_EDIT_SWAP,              VIRTKEY, CONTROL, NOINVERT
@@ -1694,6 +1712,35 @@ BEGIN
     DEFPUSHBUTTON   "OK",IDOK,163,97,50,14
 END
 
+IDD_PASTE_CACHE_MGR DIALOGEX 0, 0, 300, 192
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Paste Image Cache Management"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Cache folder",IDC_STATIC,7,4,286,42
+    EDITTEXT        IDC_PCM_DIR_EDIT,14,16,218,12,ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Browse...",IDC_PCM_DIR_BROWSE,236,16,26,12,WS_TABSTOP
+    PUSHBUTTON      "Default",IDC_PCM_DIR_RESET,264,16,22,12,WS_TABSTOP
+    LTEXT           "",IDC_PCM_USAGE,14,31,272,10
+    GROUPBOX        "Manual cleanup",IDC_STATIC,7,50,286,36
+    LTEXT           "Clean files older than",IDC_STATIC,14,64,92,8
+    EDITTEXT        IDC_PCM_AGE_EDIT,120,62,30,12,ES_NUMBER | WS_TABSTOP
+    LTEXT           "days",IDC_PCM_AGE_DAYS,154,64,18,8
+    AUTOCHECKBOX    "All files",IDC_PCM_AGE_ALL,176,63,58,10,WS_TABSTOP
+    PUSHBUTTON      "Clean up now...",IDC_PCM_CLEAN_BUTTON,240,61,46,14,WS_TABSTOP
+    GROUPBOX        "Automatic cleanup",IDC_STATIC,7,90,286,66
+    AUTOCHECKBOX    "Clean automatically on startup (quiet, throttled)",IDC_PCM_AUTO_ENABLE,14,102,272,10,WS_TABSTOP
+    RTEXT           "Delete files older than",IDC_STATIC,14,118,98,8
+    EDITTEXT        IDC_PCM_AUTO_AGE_EDIT,120,116,30,12,ES_NUMBER | WS_TABSTOP
+    LTEXT           "days",IDC_STATIC,154,118,18,8
+    RTEXT           "At most once every",IDC_STATIC,14,132,98,8
+    EDITTEXT        IDC_PCM_AUTO_INTERVAL_EDIT,120,130,30,12,ES_NUMBER | WS_TABSTOP
+    LTEXT           "days",IDC_STATIC,154,132,18,8
+    LTEXT           "Only files matching the cache naming pattern are deleted; other files in the folder are never touched.",IDC_STATIC,14,146,272,8
+    DEFPUSHBUTTON   "OK",IDOK,187,171,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,241,171,50,14
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1878,7 +1925,12 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_PASTE_CACHE_FULL    "Paste cache is full (max 64 images / 128 MiB). Clear %TEMP%\\notepad420-Paste and try again."
+    IDS_PASTE_CACHE_FULL    "Unable to write to the paste cache directory. Check the cache location in Settings - Paste Image Cache Management and try again."
+// Positional %1!s!/%2!s! placeholders keep satellite rc files free to reorder.
+    IDS_PCM_USAGE           "Current cache: %s files, %s"
+    IDS_PCM_NOTHING_TO_CLEAN "No cache files older than the selected period."
+    IDS_PCM_CONFIRM_CLEANUP "Delete %s cache files (%s)? Files currently in use by other programs are skipped."
+    IDS_PCM_STATUS_AUTO     "Paste cache: auto-cleaned %s files (%s)"
 END
 
 STRINGTABLE

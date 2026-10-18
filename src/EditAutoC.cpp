@@ -8,12 +8,14 @@
 #include <climits>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include "SciCall.h"
 #include "VectorISA.h"
 #include "Helpers.h"
 #include "Edit.h"
 #include "Styles.h"
 #include "resource.h"
+#include "MarkdownList.h"
 #include "EditAutoC_Data0.h"
 #include "LaTeXInput.h"
 
@@ -3520,4 +3522,162 @@ void InitAutoCompletionCache(LPCEDITLEXER pLex) noexcept {
 	}
 
 	UpdateLexerExtraKeywords();
+}
+
+
+// ---------------------------------------------------------------------------
+// Markdown list auto-completion (task 005). Enter-key port of kedit's
+// enterKeyHandler: continue the previous line's marker, erase a freshly
+// continued bare marker on the next Enter, renumber ordered sections.
+// The pure rules live in MarkdownList.cpp (unit-tested without a document).
+
+static Sci_Position s_iMdContinuedPos = -1;	// cursor position right after a marker insertion
+
+// Renumber the ordered section around `iLine` inside a bounded window (kedit
+// renumbers the whole document; 64KiB back / 1MiB forward covers real files).
+// `pszIndent` selects the erase variant (see MarkdownList.h).
+static void MdRenumberDocument(Sci_Line iLine, const char *pszIndent) noexcept
+{
+	const Sci_Line iDocEndLine = SciCall_GetLineCount() - 1;
+	const Sci_Line iFirst = SciCall_LineFromPosition(
+		max<Sci_Position>(0, SciCall_PositionFromLine(iLine) - (1 << 16)));
+	const Sci_Position iStart = SciCall_PositionFromLine(iFirst);
+	const Sci_Line iLast = SciCall_LineFromPosition(
+		min<Sci_Position>(SciCall_GetLineEndPosition(iDocEndLine), iStart + (1 << 20)));
+	const Sci_Position iEnd = SciCall_GetLineEndPosition(iLast);
+	const Sci_Position iLength = iEnd - iStart;
+	if (iLength <= 0) {
+		return;
+	}
+	char *pszText = static_cast<char *>(NP2HeapAlloc(iLength + 2));
+	char *pszNorm = static_cast<char *>(NP2HeapAlloc(iLength + 2));
+	if (pszText == nullptr || pszNorm == nullptr) {
+		NP2HeapFree(pszText);
+		NP2HeapFree(pszNorm);
+		return;
+	}
+	const Sci_TextRangeFull tr = { { iStart, iEnd }, pszText };
+	pszText[0] = '\0';
+	SciCall_GetTextRangeFull(&tr);
+
+	// kedit works on LF text; normalize for the comparison with its output.
+	Sci_Position nNorm = 0;
+	for (Sci_Position i = 0; pszText[i] != '\0'; ) {
+		if (pszText[i] == '\r') {
+			pszNorm[nNorm++] = '\n';
+			i += (pszText[i + 1] == '\n') ? 2 : 1;
+		} else {
+			pszNorm[nNorm++] = pszText[i++];
+		}
+	}
+	pszNorm[nNorm] = '\0';
+
+	std::size_t outLength = 0;
+	char *pszNew = (pszIndent != nullptr)
+		? MdListRenumberSectionWithIndent(pszNorm, nNorm, iLine - iFirst, pszIndent, &outLength)
+		: MdListRenumberSection(pszNorm, nNorm, iLine - iFirst, &outLength);
+	NP2HeapFree(pszText);
+	NP2HeapFree(pszNorm);
+	if (pszNew == nullptr) {
+		return;
+	}
+
+	// Line-by-line replacement keeps document EOLs byte-intact; the renumber
+	// never adds or removes lines, so window line numbers stay valid.
+	SciCall_BeginUndoAction();
+	const char *p = pszNew;
+	const char *const pStop = pszNew + outLength;
+	Sci_Line iRow = iFirst;
+	while (iRow <= iLast) {
+		const char *pEndOfLine = (p < pStop) ? static_cast<const char *>(memchr(p, '\n', pStop - p)) : nullptr;
+		const std::size_t lineLength = (pEndOfLine != nullptr) ? (pEndOfLine - p) : (pStop - p);
+		const Sci_Position iLineStart = SciCall_PositionFromLine(iRow);
+		const Sci_Position iLineEnd = SciCall_GetLineEndPosition(iRow);
+		const Sci_Position iLineLength = iLineEnd - iLineStart;
+		if (static_cast<std::size_t>(iLineLength) != lineLength
+		 || (lineLength > 0 && memcmp(p, SciCall_GetRangePointer(iLineStart, iLineLength), lineLength) != 0)) {
+			SciCall_SetTargetRange(iLineStart, iLineEnd);
+			SciCall_ReplaceTarget(static_cast<Sci_Position>(lineLength), p);
+		}
+		if (pEndOfLine == nullptr) {
+			break;
+		}
+		p = pEndOfLine + 1;
+		++iRow;
+	}
+	SciCall_EndUndoAction();
+	std::free(pszNew);
+}
+
+// Called from SCN_CHARADDED after '\r'/'\n' was inserted (caller already
+// applies the CRLF/LF skip). Returns true when the list logic owned the key.
+bool EditMarkdownListEnter() noexcept
+{
+	if (!bMarkdownListAutoComplete || pLexCurrent->iLexer != SCLEX_MARKDOWN || SciCall_GetReadOnly()) {
+		return false;
+	}
+	const Sci_Position iCurPos = SciCall_GetCurrentPos();
+	if (SciCall_GetSelectionStart() != SciCall_GetSelectionEnd()) {
+		s_iMdContinuedPos = -1;	// kedit: erase requires an empty selection
+		return false;
+	}
+	const Sci_Line iCurLine = SciCall_LineFromPosition(iCurPos);
+	if (iCurLine <= 0) {
+		s_iMdContinuedPos = -1;
+		return false;
+	}
+
+	// Reads the line WITHOUT its EOL (the MarkdownList matchers want that).
+	auto GetLineBytes = [](Sci_Line line, char *pszBuf, std::size_t bufSize) noexcept -> bool {
+		const Sci_Position lineLength = SciCall_GetLineLength(line);
+		if (lineLength + 1 > static_cast<Sci_Position>(bufSize)) {
+			return false;	// pathologically long line: skip the completion
+		}
+		SciCall_GetLine(line, pszBuf);
+		const Sci_Position eolLength = SciCall_GetLineEndPosition(line) - SciCall_PositionFromLine(line);
+		pszBuf[eolLength] = '\0';
+		return true;
+	};
+	char szLine[4096];
+
+	// kedit clearNewline branch: Enter right after a continuation inserted its
+	// marker erases that marker WITHOUT leaving a new line (kedit swallows the
+	// keypress at keydown time; we undo the EOL this Enter already inserted).
+	// The position delta is exactly the EOL length (1 for LF, 2 for CRLF).
+	const Sci_Position iMdDelta = iCurPos - s_iMdContinuedPos;
+	if (s_iMdContinuedPos >= 0 && (iMdDelta == 1 || iMdDelta == 2)) {
+		const Sci_Line iMarkerLine = SciCall_LineFromPosition(s_iMdContinuedPos);
+		const Sci_Position iMarkerStart = SciCall_PositionFromLine(iMarkerLine);
+		s_iMdContinuedPos = -1;
+		MdListMarker marker;
+		const bool bOrdered = GetLineBytes(iMarkerLine, szLine, COUNTOF(szLine))
+			&& MdListMatchMarker(szLine, marker) && marker.ordered;
+		// Delete the marker bytes plus the EOL this Enter just inserted: the
+		// result keeps the line count and leaves the caret at the line start.
+		SciCall_DeleteRange(iMarkerStart, iCurPos - iMarkerStart);
+		SciCall_SetSel(iMarkerStart, iMarkerStart);
+		MdRenumberDocument(iMarkerLine, bOrdered ? marker.indent : "");
+		return true;
+	}
+	s_iMdContinuedPos = -1;
+
+	// kedit continuation branch: copy the marker (indent included) to the new line.
+	const Sci_Line iPrevLine = iCurLine - 1;
+	if (!GetLineBytes(iPrevLine, szLine, COUNTOF(szLine))) {
+		return false;
+	}
+	MdListMarker marker;
+	if (!MdListMatchMarker(szLine, marker)) {
+		return false;
+	}
+	char szCont[512];
+	if (!MdListContinuation(marker, szCont, COUNTOF(szCont))) {
+		return false;
+	}
+	SciCall_AddText(static_cast<Sci_Position>(strlen(szCont)), szCont);
+	s_iMdContinuedPos = SciCall_GetCurrentPos();
+	if (marker.ordered) {
+		MdRenumberDocument(iPrevLine, nullptr);
+	}
+	return true;
 }

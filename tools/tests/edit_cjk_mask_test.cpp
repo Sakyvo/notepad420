@@ -15,7 +15,7 @@ static int g_checks = 0, g_failures = 0;
 // in sync by hand; any drift vs the real header must be fixed deliberately.
 enum {
 	AutoInsertMask_Backtick = 64,
-	AutoInsertMask_Default = 511 - 64,	// 删 ascii 反引号 (Q1, task 025)
+	AutoInsertMask_Default = 256,	// ADR 0008 修订/task 006: 括号引号与逗号空格出厂全不勾,仅保留注释符后空格
 	AutoCompletionOption_Default = 0,	// 默认不自补词/自动闭合 tag (Q2, task 026)
 };
 
@@ -35,7 +35,8 @@ uint32_t CJK_MASK_FOR_CP(uint32_t cp) noexcept {
 
 int main() {
 	CHECK((AutoInsertMask_Default & AutoInsertMask_Backtick) == 0, "backtick bit cleared in default mask");
-	CHECK(AutoInsertMask_Default == 447, "AutoInsertMask_Default == 447");
+	CHECK(AutoInsertMask_Default == 256, "AutoInsertMask_Default == 256 (brackets/quotes/comma off, comment spacing on)");
+	CHECK((AutoInsertMask_Default & 0x3F) == 0, "all six bracket/quote checkboxes off in default mask");
 	CHECK(AutoCompletionOption_Default == 0, "AutoCompletionOption_Default == 0");
 
 	CHECK(AutoInsertCJK_Default == 3, "CJK default mask = 3 (both pairs on)");

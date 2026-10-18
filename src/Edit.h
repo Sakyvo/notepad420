@@ -276,6 +276,8 @@ enum OpenSelectionType {
 	OpenSelectionType_ContainingFolder,
 };
 void EditOpenSelection(OpenSelectionType type);
+bool EditOpenPathAtMouseCtrlClick(HWND hwnd) noexcept;
+void EditHighlightPathLinks() noexcept;
 
 // in Bridge.cpp
 bool	EditPrint(HWND hwnd, LPCWSTR pszDocTitle, BOOL bDefault) noexcept;
@@ -290,6 +292,7 @@ enum {
 	IndicatorNumber_MarkOccurrence = INDICATOR_CONTAINER + 0,
 	IndicatorNumber_MatchBrace = INDICATOR_CONTAINER + 1,
 	IndicatorNumber_MatchBraceError = INDICATOR_CONTAINER + 2,
+	IndicatorNumber_PathLink = INDICATOR_CONTAINER + 3,	// task 007: existing file/folder paths, URL-like hotspot UX
 	// [INDICATOR_IME, INDICATOR_IME_MAX] are reserved for IME.
 
 	MarginNumber_LineNumber = 0,
@@ -383,7 +386,7 @@ enum {
 	AutoInsertMask_CommentAtStart = true,	// '// '
 	AutoInsertMask_SpaceAfterComment = 256,	// '// '
 	// default settings
-	AutoInsertMask_Default = 511-64,	// 除去先手反引号(ascii `` ` ``;ADR 0008)
+	AutoInsertMask_Default = 256,	// 括号/引号/逗号空格出厂全不勾,仅留注释符后空格 (task 003/006; ADR 0008 先删反引号)
 };
 
 // asm line comment
@@ -460,6 +463,7 @@ typedef uint32_t (*CJK_MASK_FOR_CP_Fn)(uint32_t);
 void	EditAutoCloseCJKPair(uint32_t chCodePoint) noexcept;
 void	EditAutoCloseXMLTag() noexcept;
 void	EditAutoIndent() noexcept;
+bool	EditMarkdownListEnter() noexcept;
 void	EditToggleCommentLine(bool alternative) noexcept;
 void	EditToggleCommentBlock(bool alternative) noexcept;
 void	EditInsertScriptShebangLine() noexcept;
@@ -713,6 +717,9 @@ struct EditFileVars {
 
 extern EditTabSettings tabSettings;
 extern EditFileVars fvCurFile;
+
+// Markdown list auto-completion on Enter (task 005; ini MarkdownListAutoComplete)
+extern bool bMarkdownListAutoComplete;
 
 void	EditSetWrapStartIndent(int tabWidth, int indentWidth) noexcept;
 void	EditSetWrapIndentMode(int tabWidth, int indentWidth) noexcept;

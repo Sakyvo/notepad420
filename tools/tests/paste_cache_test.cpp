@@ -6,6 +6,7 @@
 #include <shlwapi.h>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "../../src/PasteCache.h"
 
@@ -56,6 +57,25 @@ static void TestDefaultDir() {
 	WCHAR temp[MAX_PATH];
 	GetTempPath(MAX_PATH, temp);
 	CHECK(wcsncmp(dir, temp, wcslen(temp)) == 0, "default dir lives under %TEMP%");
+}
+
+static void TestCustomDir() {
+	// ADR 0014: the cache root is configurable; empty string restores the
+	// built-in default.
+	WCHAR dir[MAX_PATH];
+	CHECK(PasteCacheGetDir(dir), "resolve with no custom dir");
+	CHECK(wcsstr(dir, L"notepad420-Paste") != nullptr, "no custom dir falls back to the default");
+
+	// A custom dir is returned verbatim (env vars already expanded by the
+	// caller in LoadSettings; the cache layer stores what it was given).
+	const WCHAR custom[] = L"C:\\notepad420-cache-custom";
+	CHECK(PasteCacheSetCustomDir(custom), "set a custom dir");
+	CHECK(PasteCacheGetDir(dir), "resolve with custom dir");
+	CHECK(wcscmp(dir, custom) == 0, "custom dir wins over the default");
+
+	CHECK(PasteCacheSetCustomDir(L""), "clear the custom dir");
+	CHECK(PasteCacheGetDir(dir), "resolve after clearing");
+	CHECK(wcsstr(dir, L"notepad420-Paste") != nullptr, "cleared custom dir falls back to the default");
 }
 
 static void TestEnsureAndMeasure() {
@@ -111,41 +131,25 @@ static void TestWriteAndNaming() {
 	CHECK(usage.bytes == 2 * (sizeof(payload) - 1), "measure sums both sizes");
 }
 
-static void TestCapRefusesWithoutEviction() {
-	// A dedicated directory keeps the count deterministic regardless of what
-	// earlier tests wrote.
+static void TestWriteWithoutCap() {
+	// ADR 0014: no eviction and no refusal by occupancy. Write far past the old
+	// 64-file cap; every write succeeds and nothing is ever deleted.
 	WCHAR dir[MAX_PATH];
-	swprintf(dir, MAX_PATH, L"%s-cap", g_sandbox);
+	swprintf(dir, MAX_PATH, L"%s-nocap", g_sandbox);
 	RemoveDirectory(dir);
-	CHECK(PasteCacheEnsureDir(dir), "cap sandbox ready");
+	CHECK(PasteCacheEnsureDir(dir), "nocap sandbox ready");
 
-	// Fill exactly to the cap with one-byte files.
-	for (std::size_t i = 0; i < PasteCapCount; ++i) {
-		WCHAR path[MAX_PATH];
-		const char one = 'x';
-		PasteCapVerdict verdict = PasteCacheWrite(dir, &one, 1, ".png", path);
-		CHECK(verdict == PasteCapVerdict::Ok, "filling up to the cap is allowed");
-		if (i == 0) {
-			lstrcpyn(g_firstFile, path, MAX_PATH);
-		}
-	}
-	const PasteCacheUsage usage = PasteCacheMeasure(dir);
-	CHECK(usage.count == PasteCapCount, "cache holds exactly the cap count");
-
-	// Now the cap is reached: the next write must be refused, and nothing evicted.
-	WCHAR refused[MAX_PATH];
+	PasteCacheResetIndex();
+	constexpr int kOverOldCap = 70; // old cap was 64; go past it
+	WCHAR paths[kOverOldCap][MAX_PATH];
 	const char one = 'x';
-	CHECK(PasteCacheWrite(dir, &one, 1, ".png", refused) == PasteCapVerdict::Full,
-		"write past the count cap is refused");
-	CHECK(PasteCacheMeasure(dir).count == usage.count, "refusal did not evict anything");
-	CHECK(GetFileAttributes(g_firstFile) != INVALID_FILE_ATTRIBUTES, "the oldest file survived");
+	for (int i = 0; i < kOverOldCap; ++i) {
+		CHECK(PasteCacheWrite(dir, &one, 1, ".png", paths[i]) == PasteCapVerdict::Ok,
+			"write past the old cap succeeds");
+	}
+	CHECK(PasteCacheMeasure(dir).count == kOverOldCap, "nothing was evicted past the old cap");
 
-	// The byte cap refuses independently of the count.
-	WCHAR big[MAX_PATH];
-	CHECK(PasteCacheWrite(dir, &one, 1, ".png", big) == PasteCapVerdict::Full,
-		"still refused at the cap");
-
-	// Clean up the cap sandbox.
+	// Clean up the nocap sandbox.
 	WCHAR pattern[MAX_PATH];
 	swprintf(pattern, MAX_PATH, L"%s\\*", dir);
 	WIN32_FIND_DATA data;
@@ -162,8 +166,9 @@ static void TestCapRefusesWithoutEviction() {
 }
 
 static void TestWriteExDistinguishesFullFromUnwritable() {
-	// The P2 path needs to tell "the cap is reached" (the user must act) apart
-	// from "the write failed for another reason" (do not blame the cap).
+	// The P2 path needs to tell an IO failure apart from success. With the cap
+	// gone (ADR 0014), `full` means "cannot serve the paste" and is only ever
+	// reported alongside a non-Ok verdict.
 	WCHAR dir[MAX_PATH];
 	swprintf(dir, MAX_PATH, L"%s\\capfree", g_sandbox);
 	RemoveDirectory(dir);
@@ -173,25 +178,15 @@ static void TestWriteExDistinguishesFullFromUnwritable() {
 	WCHAR path[MAX_PATH];
 	bool full = true;
 	CHECK(PasteCacheWriteEx(dir, payload, sizeof(payload) - 1, ".png", path, full) ==
-			PasteCapVerdict::Ok, "write below the cap succeeds");
-	CHECK(!full, "a successful write does not report a full cache");
+			PasteCapVerdict::Ok, "an ordinary write succeeds");
+	CHECK(!full, "a successful write never reports full");
 	CHECK(GetFileAttributes(path) != INVALID_FILE_ATTRIBUTES, "the file landed on disk");
 
-	// An unwritable directory is a failure, but must NOT be blamed on the cap.
-	full = true;
-	CHECK(PasteCacheWriteEx(L"Z:\\\\notepad420\\\\definitely\\\\missing\\x", payload, 3, ".png", path, full) !=
-			PasteCapVerdict::Ok, "an unwritable directory fails");
-	CHECK(!full, "an unwritable directory is not reported as a full cache");
-
-	// Fill to the cap, then confirm the refusal IS reported as full.
-	for (std::size_t i = 1; i < PasteCapCount; ++i) {
-		WCHAR filler[MAX_PATH];
-		PasteCacheWrite(dir, &payload[0], 1, ".png", filler);
-	}
+	// An unwritable directory fails, and it IS the "cannot serve" case.
 	full = false;
-	CHECK(PasteCacheWriteEx(dir, payload, 3, ".png", path, full) == PasteCapVerdict::Full,
-		"the cap refuses further writes");
-	CHECK(full, "the cap refusal is reported as a full cache");
+	CHECK(PasteCacheWriteEx(L"Z:\\notepad420\\definitely\\missing\\x", payload, 3, ".png", path, full) !=
+			PasteCapVerdict::Ok, "an unwritable directory fails");
+	CHECK(full, "an unwritable directory is reported as full (cannot serve)");
 
 	// Clean up so the shared sandbox stays deterministic.
 	WCHAR pattern[MAX_PATH];
@@ -201,14 +196,13 @@ static void TestWriteExDistinguishesFullFromUnwritable() {
 	if (find != INVALID_HANDLE_VALUE) {
 		do {
 			WCHAR victim[MAX_PATH];
-			swprintf(victim, MAX_PATH, L"%s\\\\%s", dir, data.cFileName);
+			swprintf(victim, MAX_PATH, L"%s\\%s", dir, data.cFileName);
 			DeleteFile(victim);
 		} while (FindNextFile(find, &data));
 		FindClose(find);
 	}
 	RemoveDirectory(dir);
 }
-
 namespace {
 
 /// A P4 sink backed by the real cache directory, so the whole "rewrite the text
@@ -333,14 +327,157 @@ static void TestP4RewriteAgainstRealCache() {
 	}
 }
 
+// Touch a file with an explicit last-write FILETIME (offline-picked dates).
+static void SetWriteTimeIn(LPCWSTR dir, LPCWSTR name, const SYSTEMTIME &st) {
+	WCHAR path[MAX_PATH];
+	swprintf(path, MAX_PATH, L"%s\\%s", dir, name);
+	HANDLE h = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+						  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	FILETIME ft;
+	SystemTimeToFileTime(&st, &ft);
+	SetFileTime(h, nullptr, nullptr, &ft);
+	CloseHandle(h);
+}
+
+static bool ExistsIn(LPCWSTR dir, LPCWSTR name) {
+	WCHAR path[MAX_PATH];
+	swprintf(path, MAX_PATH, L"%s\\%s", dir, name);
+	return GetFileAttributes(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static void DeleteIn(LPCWSTR dir, LPCWSTR name) {
+	WCHAR path[MAX_PATH];
+	swprintf(path, MAX_PATH, L"%s\\%s", dir, name);
+	DeleteFile(path);
+}
+
+static void CreateBytes(LPCWSTR dir, LPCWSTR name, DWORD size) {
+	WCHAR path[MAX_PATH];
+	swprintf(path, MAX_PATH, L"%s\\%s", dir, name);
+	HANDLE h = CreateFile(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	std::vector<char> chunk(size ? size : 1, 'x');
+	DWORD written = 0;
+	WriteFile(h, chunk.data(), static_cast<DWORD>(chunk.size()), &written, nullptr);
+	CloseHandle(h);
+}
+
+static void TestIsCacheFileName() {
+	CHECK(PasteCacheIsCacheFileName(L"20250113-101112-250_0.png"), "canonical png name");
+	CHECK(PasteCacheIsCacheFileName(L"20250113-101112-250_12.jpeg"), "multi-digit index, jpeg");
+	CHECK(PasteCacheIsCacheFileName(L"20250113-101112-250_0.GIF"), "extension is case-insensitive");
+	CHECK(!PasteCacheIsCacheFileName(L"readme.txt"), "plain name is not cache");
+	CHECK(!PasteCacheIsCacheFileName(L"20250113-101112-250_0.txt"), "non-image extension is not cache");
+	CHECK(!PasteCacheIsCacheFileName(L"2025011-101112-250_0.png"), "7-digit date is not cache");
+	CHECK(!PasteCacheIsCacheFileName(L"20250113-101112-25_0.png"), "2-digit millis is not cache");
+	CHECK(!PasteCacheIsCacheFileName(L"20250113_101112-250_0.png"), "wrong separator is not cache");
+	// Format-valid but calendar-invalid dates stay cache files: the cleanup
+	// falls back to mtime for them (ADR decision: name gate, time fallback).
+	CHECK(PasteCacheIsCacheFileName(L"20250230-101112-250_0.png"), "calendar-invalid stays a cache file");
+}
+
+static void TestCleanup() {
+	WCHAR dir[MAX_PATH];
+	swprintf(dir, MAX_PATH, L"%s-clean", g_sandbox);
+	RemoveDirectory(dir);
+	CHECK(CreateDirectory(dir, nullptr), "clean sandbox dir");
+
+	CreateBytes(dir, L"20250110-101112-250_0.png", 100);	// 10 days old
+	CreateBytes(dir, L"20250115-101112-250_1.png", 100);	// 5 days old
+	CreateBytes(dir, L"20250113-101112-250_2.png", 100);	// exactly 7 days old
+	CreateBytes(dir, L"readme.txt", 100);					// not our naming
+	CreateBytes(dir, L"20250110-101112-250_3.pdf", 100);	// cache name, foreign extension
+	CreateBytes(dir, L"20250230-101112-250_4.png", 100);	// invalid embedded date, fresh mtime
+	WCHAR sub[MAX_PATH];
+	swprintf(sub, MAX_PATH, L"%s\\sub", dir);
+	CreateDirectory(sub, nullptr);
+	CreateBytes(sub, L"20250101-101112-250_5.png", 100);	// never recurse
+
+	// today = 20250120, threshold 7 days: 10-old and exactly-7 go, the rest stay.
+	PasteCacheCleanResult r = PasteCacheCleanup(dir, 7, 20250120);
+	CHECK(r.deletedCount == 2, "two entries older-or-equal threshold deleted");
+	CHECK(r.deletedBytes == 200, "deleted bytes accounted");
+	CHECK(ExistsIn(dir, L"20250115-101112-250_1.png"), "fresh entry kept");
+	CHECK(ExistsIn(dir, L"readme.txt"), "foreign file kept");
+	CHECK(ExistsIn(dir, L"20250110-101112-250_3.pdf"), "foreign extension kept");
+	CHECK(ExistsIn(dir, L"20250230-101112-250_4.png"), "mtime-fresh invalid-date kept");
+	CHECK(ExistsIn(sub, L"20250101-101112-250_5.png"), "subdirectory not touched");
+
+	// mtime fallback: same invalid-date file, backdated beyond the threshold.
+	SYSTEMTIME old{};
+	old.wYear = 2024; old.wMonth = 12; old.wDay = 25;
+	SetWriteTimeIn(dir, L"20250230-101112-250_4.png", old);
+	r = PasteCacheCleanup(dir, 7, 20250120);
+	CHECK(r.deletedCount == 1, "invalid-date entry goes once its mtime is old");
+
+	// Threshold 0 = everything cache-named, regardless of dates.
+	CreateBytes(dir, L"20250119-010203-004_6.webp", 50);
+	r = PasteCacheCleanup(dir, 0, 20250120);
+	CHECK(r.deletedCount == 2, "threshold 0 clears all cache-named files");
+	CHECK(ExistsIn(dir, L"readme.txt"), "threshold 0 still spares foreign files");
+	CHECK(ExistsIn(sub, L"20250101-101112-250_5.png"), "threshold 0 still spares subdirs");
+
+	// Preview counts exactly what Cleanup would delete, touching nothing.
+	CreateBytes(dir, L"20250105-101112-250_7.png", 60);
+	CreateBytes(dir, L"20250119-101112-250_8.png", 60);
+	PasteCacheCleanResult p = PasteCachePreviewCleanup(dir, 7, 20250120);
+	CHECK(p.deletedCount == 1 && p.deletedBytes == 60, "preview counts the aged entry only");
+	CHECK(ExistsIn(dir, L"20250105-101112-250_7.png"), "preview deletes nothing");
+	r = PasteCacheCleanup(dir, 7, 20250120);
+	CHECK(r.deletedCount == p.deletedCount && r.deletedBytes == p.deletedBytes, "cleanup matches its preview");
+	DeleteIn(dir, L"20250119-101112-250_8.png");
+
+	// Missing directory: quiet zero result, no crash (startup safety).
+	r = PasteCacheCleanup(L"Z:\\notepad420-does-not-exist", 7, 20250120);
+	CHECK(r.deletedCount == 0 && r.failedCount == 0, "missing dir is a quiet no-op");
+
+	DeleteIn(dir, L"readme.txt");
+	DeleteIn(sub, L"20250101-101112-250_5.png");
+	RemoveDirectory(sub);
+	RemoveDirectory(dir);
+}
+
+static void TestThrottle() {
+	CHECK(PasteCacheThrottleElapsed(0, 20250120, 3), "never cleaned -> run now");
+	CHECK(!PasteCacheThrottleElapsed(20250118, 20250120, 3), "two days elapsed is below three");
+	CHECK(PasteCacheThrottleElapsed(20250117, 20250120, 3), "exactly interval triggers");
+	CHECK(PasteCacheThrottleElapsed(20250131, 20250203, 3), "crossing month boundary counts days");
+	CHECK(PasteCacheThrottleElapsed(20240228, 20240302, 2), "leap-year Feb 29 counted");
+	CHECK(!PasteCacheThrottleElapsed(20250121, 20250120, 3), "future timestamp is silently respected");
+}
+
+static void TestParseAgeDays() {
+	// Manual/auto age fields. ES_NUMBER blocks letters at the UI, so this is the
+	// safety net for an empty box (user cleared it) and typed/pasted oddities:
+	// anything unusable must fall back to the remembered default, never to 0.
+	CHECK(PasteCacheParseAgeDays(L"7", 7) == 7, "plain number is read");
+	CHECK(PasteCacheParseAgeDays(L"30", 7) == 30, "another number is read");
+	CHECK(PasteCacheParseAgeDays(L"1", 7) == 1, "one is the minimum, not a fallback");
+	CHECK(PasteCacheParseAgeDays(L"", 7) == 7, "empty field falls back (never 0, which would clear everything)");
+	CHECK(PasteCacheParseAgeDays(L"0", 7) == 7, "zero falls back: the minimum age is one day");
+	CHECK(PasteCacheParseAgeDays(L"abc", 7) == 7, "garbage falls back");
+	CHECK(PasteCacheParseAgeDays(L"12abc", 7) == 12, "leading digits are read");
+	CHECK(PasteCacheParseAgeDays(L" 7 ", 7) == 7, "surrounding spaces are tolerated");
+}
+
 int main() {
 	PrepareSandbox();
 	TestDefaultDir();
+	TestCustomDir();
 	TestEnsureAndMeasure();
 	TestWriteAndNaming();
-	TestCapRefusesWithoutEviction();
+	TestWriteWithoutCap();
 	TestP4RewriteAgainstRealCache();
 	TestWriteExDistinguishesFullFromUnwritable();
+	TestIsCacheFileName();
+	TestCleanup();
+	TestThrottle();
+	TestParseAgeDays();
 	CleanSandbox();
 
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);

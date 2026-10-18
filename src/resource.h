@@ -368,6 +368,19 @@
 #define IDC_CSV_QUALIFIER_SINGLE		111
 #define IDC_CSV_QUALIFIER_NONE			112
 #define IDC_AUTO_ELEVATED_ON_STARTUP	113
+// Paste image cache management (task 002 / ADR 0014)
+#define IDD_PASTE_CACHE_MGR				134
+#define IDC_PCM_DIR_EDIT				100
+#define IDC_PCM_DIR_BROWSE				101
+#define IDC_PCM_DIR_RESET				102
+#define IDC_PCM_USAGE					103
+#define IDC_PCM_AGE_EDIT				104	// manual cleanup: days input (default 7, remembered)
+#define IDC_PCM_CLEAN_BUTTON			105
+#define IDC_PCM_AUTO_ENABLE				106
+#define IDC_PCM_AUTO_AGE_EDIT			107
+#define IDC_PCM_AUTO_INTERVAL_EDIT		108
+#define IDC_PCM_AGE_ALL					109	// manual cleanup: "all files" = 0 days; never remembered
+#define IDC_PCM_AGE_DAYS				110	// unit label next to the manual days input (disabled with it)
 
 #define IDS_APPTITLE					10000
 #define IDS_APPTITLE_PASTEBOARD			10001
@@ -392,6 +405,10 @@
 #define IDS_WILDCARDHELP				10021
 #define IDS_CMDLINEHELP					10022
 #define IDS_PASTE_CACHE_FULL				10023
+#define IDS_PCM_USAGE						10024	// "Current cache: N files, size"
+#define IDS_PCM_NOTHING_TO_CLEAN			10027
+#define IDS_PCM_CONFIRM_CLEANUP				10028	// count+size prompt before a manual clean
+#define IDS_PCM_STATUS_AUTO					10029	// status bar note after a startup auto clean
 
 #define IDM_FILE_NEW					40000	// Ctrl+N Ctrl+F4
 #define IDM_FILE_OPEN					40001	// Ctrl+O
@@ -467,6 +484,12 @@
 #define IDM_SET_SELECTIONASFINDTEXT		40081
 #define IDM_SET_PASTEBUFFERASFINDTEXT	40082
 #define IDM_SET_UNDO_REDO_SELECTION		40083
+#define IDM_SET_CARETPOS_START			40084
+#define IDM_SET_CARETPOS_END			40085
+#define IDM_SET_MD_LIST_AUTOCOMPLETE		40086
+#define IDM_SET_PASTE_CACHE_MGR			40087
+#define IDM_SET_VIEWPOS_START			40088
+#define IDM_SET_VIEWPOS_END				40089
 
 #define IDM_ENCODING_ANSI				40100
 #define IDM_ENCODING_UNICODE			40101
@@ -674,6 +697,7 @@
 #define IDM_VIEW_NOESCFUNC				40434
 #define IDM_VIEW_ESCMINIMIZE			40435
 #define IDM_VIEW_ESCEXIT				40436
+#define IDM_VIEW_CTRLJ_NEWLINE			40499
 #define IDM_VIEW_SAVEBEFORERUNNINGTOOLS 40437
 #define IDM_VIEW_NOSAVERECENT			40438
 #define IDM_VIEW_NOSAVEFINDREPL			40439
@@ -789,6 +813,7 @@
 #define CMD_INSERTFILENAME_NOEXT		40585
 #define CMD_OPEN_PATH_OR_LINK			40586
 #define CMD_OPEN_CONTAINING_FOLDER		40587
+#define CMD_CTRLJ_ENTER					40590	// Ctrl+J newline (task 009, routed like Enter)
 #define CMD_CALCULATE_EXPR				40588
 #define CMD_EVALUATE_JS_EXPR			40589
 

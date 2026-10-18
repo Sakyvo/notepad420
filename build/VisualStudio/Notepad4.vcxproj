@@ -594,6 +594,8 @@
     <ClCompile Include="..\..\src\EditAutoC.cpp" />
     <ClCompile Include="..\..\src\EditEncoding.cpp" />
     <ClCompile Include="..\..\src\Helpers.cpp" />
+    <ClCompile Include="..\..\src\MarkdownList.cpp" />
+    <ClCompile Include="..\..\src\PathLink.cpp" />
     <ClCompile Include="..\..\src\Paste.cpp" />
     <ClCompile Include="..\..\src\KeditBridge.cpp" />
     <ClCompile Include="..\..\src\ScrollAuto.cpp" />
@@ -765,6 +767,7 @@
     <ClInclude Include="..\..\src\EditLexers/EditStyle.h" />
     <ClInclude Include="..\..\src\EditLexers/EditStyleX.h" />
     <ClInclude Include="..\..\src\Helpers.h" />
+    <ClInclude Include="..\..\src\MarkdownList.h" />
     <ClInclude Include="..\..\src\Notepad4.h" />
     <ClInclude Include="..\..\src\Resource.h" />
     <ClInclude Include="..\..\src\SciCall.h" />

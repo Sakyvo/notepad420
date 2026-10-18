@@ -260,7 +260,7 @@ BEGIN
 			MENUITEM "复制行(&C)\tCtrl+Shift+C",	IDM_EDIT_COPYLINE
 			MENUITEM "删除行(&E)\tCtrl+Shift+D",	IDM_EDIT_DELETELINE
 			MENUITEM SEPARATOR
-			MENUITEM "行合并(&J)\tCtrl+J",			IDM_EDIT_JOINLINES
+			MENUITEM "行合并(&J)",				IDM_EDIT_JOINLINES
 			MENUITEM "行切分(&S)\tCtrl+I",			IDM_EDIT_SPLITLINES
 			MENUITEM "段落切分(&W)...",				IDM_EDIT_COLUMNWRAP
 			MENUITEM "段落合并(&P)\tCtrl+Shift+J",	IDM_EDIT_JOINLINESEX
@@ -573,6 +573,19 @@ BEGIN
 	END
 	POPUP "设置(&I)"
 	BEGIN
+		POPUP "启动时(&S)"
+		BEGIN
+			POPUP "默认光标位置(&C)"
+			BEGIN
+				MENUITEM "文档开头(&S)",			IDM_SET_CARETPOS_START
+				MENUITEM "文档末尾(&E)",			IDM_SET_CARETPOS_END
+			END
+			POPUP "默认视图位置(&V)"
+			BEGIN
+				MENUITEM "文档开头(&S)",			IDM_SET_VIEWPOS_START
+				MENUITEM "文档末尾(&E)",			IDM_SET_VIEWPOS_END
+			END
+		END
 		MENUITEM "插入制表符为空格(&S)",			IDM_VIEW_TABSASSPACES
 		MENUITEM "制表符设置(&T)...\tCtrl+T",		IDM_VIEW_TABSETTINGS
 		MENUITEM "自动换行设置(&W)...",				IDM_VIEW_WORDWRAPSETTINGS
@@ -657,11 +670,14 @@ BEGIN
 			MENUITEM "最小化 notepad420(&M)",			IDM_VIEW_ESCMINIMIZE
 			MENUITEM "退出 notepad420(&X)",			IDM_VIEW_ESCEXIT
 		END
+		MENUITEM SEPARATOR
+		MENUITEM "Ctrl+J 插入换行(&L)",			IDM_VIEW_CTRLJ_NEWLINE
 		POPUP "其他设置(&I)"
 		BEGIN
 			MENUITEM "记住最近的文件(&F)",			IDM_VIEW_NOSAVERECENT
 			MENUITEM "记住搜索选项(&S)",			IDM_VIEW_NOSAVEFINDREPL
 		END
+		MENUITEM "粘贴图片缓存管理(&C)...",		IDM_SET_PASTE_CACHE_MGR
 		MENUITEM SEPARATOR
 		POPUP "高级设置(&D)"
 		BEGIN
@@ -692,6 +708,8 @@ BEGIN
 				MENUITEM "从右到左(&R)",			IDM_SET_BIDIRECTIONAL_R2L
 			END
 			MENUITEM "使用内嵌模式输入法(&I)",		IDM_SET_USE_INLINE_IME
+			MENUITEM SEPARATOR
+			MENUITEM "Markdown 列表自动补全(&M)",		IDM_SET_MD_LIST_AUTOCOMPLETE
 			MENUITEM SEPARATOR
 			MENUITEM "系统集成(&S)...",				IDM_SET_SYSTEM_INTEGRATION
 			MENUITEM "打开 notepad420.ini(&O)\tCtrl+F7",	CMD_OPENINIFILE
@@ -899,7 +917,7 @@ BEGIN
     "I",            IDM_FILE_OPENFAV,           VIRTKEY, ALT, NOINVERT
     "I",            IDM_EDIT_TITLECASE,         VIRTKEY, CONTROL, ALT, NOINVERT
     "I",            IDM_VIEW_HIGHLIGHTCURRENTLINE_BACK, VIRTKEY, SHIFT, CONTROL, NOINVERT
-    "J",            IDM_EDIT_JOINLINES,         VIRTKEY, CONTROL, NOINVERT
+    "J",            CMD_CTRLJ_ENTER,            VIRTKEY, CONTROL, NOINVERT
     "J",            IDM_EDIT_ALIGN,             VIRTKEY, ALT, NOINVERT
     "J",            IDM_EDIT_JOINLINESEX,       VIRTKEY, SHIFT, CONTROL, NOINVERT
     "K",            IDM_EDIT_SWAP,              VIRTKEY, CONTROL, NOINVERT
@@ -1694,6 +1712,35 @@ BEGIN
     DEFPUSHBUTTON   "确定",IDOK,163,97,50,14
 END
 
+IDD_PASTE_CACHE_MGR DIALOGEX 0, 0, 300, 192
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "粘贴图片缓存管理"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "缓存文件夹",IDC_STATIC,7,4,286,42
+    EDITTEXT        IDC_PCM_DIR_EDIT,14,16,218,12,ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON      "浏览...",IDC_PCM_DIR_BROWSE,236,16,26,12,WS_TABSTOP
+    PUSHBUTTON      "默认",IDC_PCM_DIR_RESET,264,16,22,12,WS_TABSTOP
+    LTEXT           "",IDC_PCM_USAGE,14,31,272,10
+    GROUPBOX        "手动清理",IDC_STATIC,7,50,286,36
+    LTEXT           "清理早于以下时间的文件",IDC_STATIC,14,64,98,8
+    EDITTEXT        IDC_PCM_AGE_EDIT,120,62,30,12,ES_NUMBER | WS_TABSTOP
+    LTEXT           "天",IDC_PCM_AGE_DAYS,154,64,18,8
+    AUTOCHECKBOX    "全部文件",IDC_PCM_AGE_ALL,176,63,58,10,WS_TABSTOP
+    PUSHBUTTON      "立即清理...",IDC_PCM_CLEAN_BUTTON,240,61,46,14,WS_TABSTOP
+    GROUPBOX        "自动清理",IDC_STATIC,7,90,286,66
+    AUTOCHECKBOX    "启动时自动清理(静默执行,按间隔节流)",IDC_PCM_AUTO_ENABLE,14,102,272,10,WS_TABSTOP
+    RTEXT           "删除早于",IDC_STATIC,14,118,98,8
+    EDITTEXT        IDC_PCM_AUTO_AGE_EDIT,120,116,30,12,ES_NUMBER | WS_TABSTOP
+    LTEXT           "天的文件",IDC_STATIC,154,118,32,8
+    RTEXT           "最短间隔",IDC_STATIC,14,132,98,8
+    EDITTEXT        IDC_PCM_AUTO_INTERVAL_EDIT,120,130,30,12,ES_NUMBER | WS_TABSTOP
+    LTEXT           "天",IDC_STATIC,154,132,18,8
+    LTEXT           "只会删除符合缓存命名规则的文件； 文件夹内的其他文件不受影响。",IDC_STATIC,14,146,272,8
+    DEFPUSHBUTTON   "确定",IDOK,187,171,50,14
+    PUSHBUTTON      "取消",IDCANCEL,241,171,50,14
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1827,7 +1874,7 @@ BEGIN
     IDS_ERR_BROWSE          "没有找到文件浏览器插件。\nmatepath 文件浏览器插件可以从如下地址下载:\nhttps://github.com/zufuliu/notepad4/releases\n\n是否立即打开下载页面？"
     IDS_ERR_MRUDLG          "没有权限访问选中的文件！\n要从列表中移除它吗？"
     IDS_ERR_CREATELINK      "创建桌面快捷方式时出错。"
-    IDS_ERR_PREVWINDISABLED "现有的 Notepad4 窗口正忙或有一个活动的对话框。\n要打开一个新的窗口吗？"
+    IDS_ERR_PREVWINDISABLED "现有的 notepad420 窗口正忙或有一个活动的对话框。\n要打开一个新的窗口吗？"
     IDS_SELRECT             "此操作不能在矩形选区内执行。"
     IDS_BUFFERTOOSMALL      "此操作不能执行(行太长)。"
     IDS_FIND_WRAPFW         "已到文档末尾，从文档开头重新搜索。"
@@ -1840,7 +1887,7 @@ BEGIN
     IDS_ERR_UNICODE         "转换该 Unicode 文件时出错。\n如果保存该文件，数据将会丢失！"
     IDS_BINARY_FILE_OPENED  "这不太像是一个文本文件，因此以只读模式打开，\n以防止意外的编辑造成文件损坏。"
 #if NP2_ENABLE_APP_LOCALIZATION_DLL
-    IDS_CHANGE_LANG_RESTART "更改界面语言需要重新启动 Notepad4，现在就重新启动吗？"
+    IDS_CHANGE_LANG_RESTART "更改界面语言需要重新启动 notepad420，现在就重新启动吗？"
 #endif
 END
 
@@ -1878,7 +1925,13 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_PASTE_CACHE_FULL    "粘贴缓存已满(上限 64 张图 / 128 MiB)。请清理 %TEMP%\\notepad420-Paste 后重试。"
+    IDS_PASTE_CACHE_FULL    "无法写入粘贴缓存目录。请在「设置 - 粘贴图片缓存管理」中检查缓存位置后重试。"
+// Cache management strings (task 002 / ADR 0014) use %1!s!/%2!s! positional
+// placeholders so every satellite rc can reorder them freely.
+    IDS_PCM_USAGE           "当前缓存：%s 个文件，%s"
+    IDS_PCM_NOTHING_TO_CLEAN "所选时间之前没有可清理的缓存文件。"
+    IDS_PCM_CONFIRM_CLEANUP "将删除 %s 个缓存文件（%s）。正被其他程序占用的文件会被跳过。是否继续？"
+    IDS_PCM_STATUS_AUTO     "粘贴缓存：已自动清理 %s 个文件（%s）"
 END
 
 STRINGTABLE

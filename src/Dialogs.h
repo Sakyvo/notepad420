@@ -64,3 +64,13 @@ INT_PTR InfoBox(UINT uType, LPCWSTR lpstrSetting, UINT uidMessage, ...) noexcept
 #define InfoBoxAsk(uType, lpstrSetting, uidMessage, ...)	InfoBox(MB_ICONQUESTION | (uType), (lpstrSetting), (uidMessage), ##__VA_ARGS__)
 
 void	SystemIntegrationDlg(HWND hwnd) noexcept;
+
+// Paste image cache management (task 002 / ADR 0014)
+void	PasteCacheMgrDlg(HWND hwnd) noexcept;
+bool	PcmAutoCleanEnabled() noexcept;
+int		PcmAutoCleanAgeDays() noexcept;
+int		PcmAutoCleanIntervalDays() noexcept;
+void	PcmCommitDirSetting(LPCWSTR verbatimDir) noexcept;
+void	PcmCommitAutoCleanSetting(bool enable, int ageDays, int intervalDays) noexcept;
+int		PcmManualCleanAgeDays() noexcept;
+void	PcmCommitManualCleanAgeDays(int ageDays) noexcept;

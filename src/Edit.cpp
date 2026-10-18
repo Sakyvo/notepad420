@@ -39,6 +39,7 @@
 #include "DarkMode.h"
 #include "Notepad4.h"
 #include "Edit.h"
+#include "PathLink.h"
 #include "Styles.h"
 #include "Dialogs.h"
 #include "resource.h"
@@ -6806,6 +6807,110 @@ void TryBrowseFile(HWND hwnd, LPCWSTR pszFile, bool bWarn) noexcept {
 	}
 }
 
+// task 007: highlight existing file/folder paths so Ctrl+Click opens them
+// with the system default association, reusing the URL hotspot UX (Q4.2).
+// Threshold: documents larger than PathLinkScanLimit are skipped (Q4.5) —
+// per-candidate GetFileAttributes on huge files would stall editing.
+static const Sci_Position PathLinkScanLimit = 2 * 1024 * 1024;
+
+static bool PathLinkExists(const char *raw, const char *baseDir, char *out) noexcept {
+	// trim surrounding quotes: the token span covers them by design (Q4.3).
+	char token[MAX_PATH * 2];
+	lstrcpynA(token, raw, COUNTOF(token));
+	size_t len = strlen(token);
+	while (len > 0 && (token[len - 1] == '"' || token[len - 1] == 0x27)) {
+		token[--len] = '\0';
+	}
+	if (len > 0 && (token[0] == '"' || token[0] == 0x27)) {
+		memmove(token, token + 1, len);
+		token[--len] = '\0';
+	}
+	if (len == 0) {
+		return false;
+	}
+
+	// 1) as-is (absolute / UNC / drive-relative)
+	lstrcpynA(out, token, MAX_PATH * 2);
+	if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES) {
+		return true;
+	}
+	// 2) relative to the current document directory (Q4.4)
+	if (baseDir[0] != '\0' && token[0] != '\\' && !(token[0] != '\0' && token[1] == ':')) {
+		const size_t cchBase = static_cast<size_t>(lstrlenA(baseDir));
+		const size_t cchToken = static_cast<size_t>(lstrlenA(token));
+		char joined[MAX_PATH * 2 + 1024];
+		if (cchBase + 1 + cchToken >= COUNTOF(joined) - 1) {
+			return false;		// too long to join: no hotspot rather than overflow
+		}
+		lstrcpynA(joined, baseDir, COUNTOF(joined));
+		if (joined[cchBase - 1] != '\\') {
+			lstrcatA(joined, "\\");
+		}
+		lstrcatA(joined, token);
+		if (GetFileAttributesA(joined) != INVALID_FILE_ATTRIBUTES) {
+			lstrcpynA(out, joined, MAX_PATH * 2);
+			return true;
+		}
+	}
+	// 3) %ENV% expansion
+	if (token[0] == '%') {
+		char expanded[MAX_PATH * 2];
+		if (ExpandEnvironmentStringsA(token, expanded, COUNTOF(expanded)) > 0 &&
+			GetFileAttributesA(expanded) != INVALID_FILE_ATTRIBUTES) {
+			lstrcpynA(out, expanded, MAX_PATH * 2);
+			return true;
+		}
+	}
+	return false;
+}
+
+void EditHighlightPathLinks() noexcept {
+	const Sci_Position iLength = SciCall_GetLength();
+	SciCall_SetIndicatorCurrent(IndicatorNumber_PathLink);
+	SciCall_IndicatorClearRange(0, iLength);
+	if (iLength == 0 || iLength > PathLinkScanLimit) {
+		return;
+	}
+
+	char baseDir[MAX_PATH];
+	baseDir[0] = '\0';
+	if (StrNotEmpty(szCurFile)) {
+		WCHAR wDir[MAX_PATH];
+		lstrcpynW(wDir, szCurFile, COUNTOF(wDir));
+		PathRemoveFileSpecW(wDir);
+		WideCharToMultiByte(CP_ACP, 0, wDir, -1, baseDir, COUNTOF(baseDir), nullptr, nullptr);
+	}
+
+	char lineBuf[1024];
+	const Sci_Line lineCount = SciCall_GetLineCount();
+	for (Sci_Line line = 0; line < lineCount; ++line) {
+		const Sci_Position lineStart = SciCall_PositionFromLine(line);
+		const Sci_Position lineEnd = SciCall_GetLineEndPosition(line);
+		const Sci_Position cch = lineEnd - lineStart;
+		if (cch <= 0 || cch >= COUNTOF(lineBuf) - 1) {
+			continue;
+		}
+		SciCall_GetLine(line, lineBuf);
+		lineBuf[cch] = '\0';
+
+		// scan every column for tokens; skip ahead after each hit
+		Sci_Position col = 0;
+		while (col < cch) {
+			PathLinkToken t;
+			if (PathLinkExtractAt(lineBuf, col, &t)) {
+				char resolved[MAX_PATH * 2];
+				if (PathLinkResolveInto(lineBuf + t.begin, baseDir, resolved, PathLinkExists)) {
+					const ptrdiff_t span = t.end - t.begin;
+					SciCall_IndicatorFillRange(lineStart + t.begin, static_cast<Sci_Position>(span));
+				}
+				col = (t.end > col) ? t.end : (col + 1);	// never stall (task 007 hang)
+			} else {
+				++col;
+			}
+		}
+	}
+}
+
 char *EditGetStringAroundCaret(LPCSTR delimiters, UINT textLength) noexcept {
 	const Sci_Position iCurrentPos = SciCall_GetCurrentPos();
 	const Sci_Line iLine = SciCall_LineFromPosition(iCurrentPos);
@@ -7143,6 +7248,57 @@ void EditOpenSelection(OpenSelectionType type) {
 	}
 
 	NP2HeapFree(wszSelection);
+}
+
+bool EditOpenPathAtMouseCtrlClick(HWND hwnd) noexcept {
+	POINT pt;
+	if (!GetCursorPos(&pt)) {
+		return false;
+	}
+	ScreenToClient(hwndEdit, &pt);
+	const Sci_Position pos = SciCall_PositionFromPointClose(pt.x, pt.y);
+	if (pos < 0) {
+		return false;
+	}
+
+	const Sci_Line line = SciCall_LineFromPosition(pos);
+	const Sci_Position lineStart = SciCall_PositionFromLine(line);
+	const Sci_Position lineEnd = SciCall_GetLineEndPosition(line);
+	const Sci_Position cchLine = lineEnd - lineStart;
+	if (cchLine <= 0 || cchLine >= 1024) {
+		return false;
+	}
+	char buf[1024];
+	SciCall_GetLine(line, buf);
+	buf[cchLine] = '\0';
+
+	// judge with the same semantics as the hotspot painting (single source of truth)
+	PathLinkToken t;
+	if (!PathLinkExtractAt(buf, pos - lineStart, &t)) {
+		return false;
+	}
+	char resolved[MAX_PATH * 2];
+	char baseDir[MAX_PATH] = "";
+	if (StrNotEmpty(szCurFile)) {
+		WCHAR wDir[MAX_PATH];
+		lstrcpynW(wDir, szCurFile, COUNTOF(wDir));
+		PathRemoveFileSpecW(wDir);
+		WideCharToMultiByte(CP_ACP, 0, wDir, -1, baseDir, COUNTOF(baseDir), nullptr, nullptr);
+	}
+	char token[2048];
+	const ptrdiff_t span = t.end - t.begin;
+	memcpy(token, buf + t.begin, static_cast<size_t>(span));
+	token[span] = '\0';
+	if (!PathLinkExists(token, baseDir, resolved)) {
+		return false;
+	}
+
+	WCHAR wszPath[MAX_PATH * 2];
+	if (MultiByteToWideChar(CP_ACP, 0, resolved, -1, wszPath, COUNTOF(wszPath)) == 0) {
+		return false;
+	}
+	ShellExecuteW(hwnd, L"open", wszPath, nullptr, nullptr, SW_SHOWNORMAL);
+	return true;
 }
 
 //=============================================================================

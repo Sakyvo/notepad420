@@ -18,6 +18,10 @@
 
 namespace ReplacerOps {
 
+/// 进度回调（可选）:每个可数子步骤完成时调用一次,pos 从 1 起,range 为本操作
+/// 总步数。传 nullptr（CLI 路径）零开销。不改变返回值与 error 语义。
+typedef void (*ProgressFn)(unsigned pos, unsigned range);
+
 /// 是否以管理员提权运行。
 bool IsElevatedSelf() noexcept;
 
@@ -32,17 +36,17 @@ std::wstring LocalNotepad420Path();
 /// 替换全流程（文件 3 处 + locale + IFEO/UserChoice/ProgId）。
 /// 不写 EDITOR/VISUAL；调用方需要时另调 RunEditorOperation。
 /// 返回上述退出码，失败时 error 带人类可读描述。
-int RunReplaceOperation(std::wstring &error);
+int RunReplaceOperation(std::wstring &error, ProgressFn progress = nullptr);
 
 /// 只写 EDITOR + VISUAL。
-int RunEditorOperation(std::wstring &error);
+int RunEditorOperation(std::wstring &error, ProgressFn progress = nullptr);
 
 /// 默认打开接管(--associate, ADR 0010):把 25 项清单的 UserChoice 重建为
 /// Applications\notepad420.exe,与文件替换解耦。单项写失败即中止返回 5。
-int RunAssociateOperation(std::wstring &error);
+int RunAssociateOperation(std::wstring &error, ProgressFn progress = nullptr);
 
 /// 恢复全流程（文件 3 处 + locale 回收 + UserChoice/ProgId 清理 + EDITOR/VISUAL 回滚）。
-int RunRestoreOperation(std::wstring &error);
+int RunRestoreOperation(std::wstring &error, ProgressFn progress = nullptr);
 
 /// 测试接缝:重定向替换/恢复作用的文件目标集, nullptr 复位为系统三处。
 void SetTargetsForTesting(const wchar_t *const *targets, size_t count);

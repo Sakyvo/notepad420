@@ -39,6 +39,7 @@
 #include "Styles.h"
 #include "Dialogs.h"
 #include "Paste.h"
+#include "PasteCache.h"
 #include "ScrollAuto.h"
 #include "resource.h"
 
@@ -189,6 +190,7 @@ static DWORD dwFileCheckInterval;
 static DWORD dwAutoReloadTimeout;
 unsigned int dwUrlThreshold;
 static EscFunction iEscFunction;
+static bool bCtrlJNewline;	// task 009: Ctrl+J inserts newline (default on)
 static bool bAlwaysOnTop;
 static bool bMinimizeToTray;
 static TransparentMode bTransparentMode;
@@ -199,6 +201,19 @@ bool	bWindowLayoutRTL;
 static int iRenderingTechnology;
 static bool bUseInlineIME;
 static int iBidirectional;
+// ADR 0014/task 004: where the caret lands when a file opens without a stored view.
+// 2026-10-12 review: default back to 开头/开头 (start/start); end variants stay opt-in.
+static bool bDefaultCaretAtEnd = false;
+static bool bDefaultViewAtEnd = false;
+// task 005: Markdown list auto-completion on Enter (kedit port), on by default.
+bool bMarkdownListAutoComplete = true;
+// task 002 / ADR 0014: optional quiet auto-clean of the paste cache.
+static bool bPasteCacheAutoClean = false;
+static int iPasteCacheAutoCleanAgeDays = 7;
+static int iPasteCacheAutoCleanIntervalDays = 3;
+static int iPasteCacheManualCleanAgeDays = 7;	// remembered manual cleanup day count
+static UINT s_idPcmAutoCleanTimer = 0;
+static void PasteCacheAutoCleanOnStartup() noexcept;
 static bool bShowMenu;
 static bool bShowToolbar;
 static int iAutoScaleToolbar;
@@ -843,10 +858,12 @@ void InitInstance(HINSTANCE hInstance, int nCmdShow) {
 		}
 	}
 
+	WCHAR szInitTitle[128];
+	GetString(IDS_APPTITLE, szInitTitle, COUNTOF(szInitTitle));
 	HWND hwnd = CreateWindowEx(
 				   WS_EX_ACCEPTFILES,
 				   wchWndClass,
-				   WC_NOTEPAD4,
+				   szInitTitle,		// visible title: product identity, not the internal class name
 				   WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
 				   wi.x,
 				   wi.y,
@@ -1002,6 +1019,11 @@ void InitInstance(HINSTANCE hInstance, int nCmdShow) {
 	}
 
 	bInitDone = true;
+	// ADR 0014: evaluate the optional quiet paste-cache cleanup once per run
+	// (one-shot timer so startup itself is never blocked by the enumeration).
+	if (!s_idPcmAutoCleanTimer) {
+		s_idPcmAutoCleanTimer = SetTimer(hwnd, ID_PASTECACHEAUTOCLEANTIMER, 200, nullptr);
+	}
 	if (SciCall_GetLength() == 0) {
 		UpdateToolbar();
 		UpdateStatusbar();
@@ -1099,6 +1121,93 @@ static void SaveAllSettings(bool destroy) noexcept {
 	mruFile.MergeSave(bSaveRecentFiles, destroy);
 	mruFind.MergeSave(bSaveFindReplace, destroy);
 	mruReplace.MergeSave(bSaveFindReplace, destroy);
+}
+
+//=============================================================================
+//
+// Paste cache settings bridge (task 002 / ADR 0014)
+//
+// The management dialog lives in Dialogs.cpp; settings state stays here with
+// the rest of the ini layer. Dir values are stored verbatim in the ini and
+// expanded (env vars) when applied, mirroring LoadSettings().
+//
+
+bool PcmAutoCleanEnabled() noexcept {
+	return bPasteCacheAutoClean;
+}
+
+int PcmAutoCleanAgeDays() noexcept {
+	return iPasteCacheAutoCleanAgeDays;
+}
+
+int PcmAutoCleanIntervalDays() noexcept {
+	return iPasteCacheAutoCleanIntervalDays;
+}
+
+void PcmCommitDirSetting(LPCWSTR verbatimDir) noexcept {
+	WCHAR expanded[MAX_PATH];
+	if (StrNotEmpty(verbatimDir) && ExpandEnvironmentStringsEx(verbatimDir, expanded)) {
+		PasteCacheSetCustomDir(expanded);
+	} else {
+		PasteCacheSetCustomDir(verbatimDir);
+	}
+	if (bSaveSettings) {
+		SaveSettings(false);
+	}
+}
+
+void PcmCommitAutoCleanSetting(bool enable, int ageDays, int intervalDays) noexcept {
+	bPasteCacheAutoClean = enable;
+	iPasteCacheAutoCleanAgeDays = ageDays;
+	iPasteCacheAutoCleanIntervalDays = intervalDays;
+	if (bSaveSettings) {
+		SaveSettings(false);
+	}
+}
+
+int PcmManualCleanAgeDays() noexcept {
+	return iPasteCacheManualCleanAgeDays;
+}
+
+void PcmCommitManualCleanAgeDays(int ageDays) noexcept {
+	iPasteCacheManualCleanAgeDays = (ageDays >= 1) ? ageDays : 7;
+	if (bSaveSettings) {
+		SaveSettings(false);
+	}
+}
+
+// One-shot startup evaluation (ADR 0014): opt-in, throttled by calendar days,
+// fully quiet on every failure path. A successful pass stamps the shared
+// last-cleanup date that manual cleans write as well.
+static void PasteCacheAutoCleanOnStartup() noexcept {
+	if (!bPasteCacheAutoClean) {
+		return;
+	}
+	const int lastCleanup = IniGetInt(INI_SECTION_NAME_FLAGS, L"PasteCacheLastCleanup", 0);
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	const int today = st.wYear * 10000 + st.wMonth * 100 + st.wDay;
+	if (!PasteCacheThrottleElapsed(static_cast<unsigned>(lastCleanup), static_cast<unsigned>(today),
+								static_cast<unsigned>(iPasteCacheAutoCleanIntervalDays))) {
+		return;
+	}
+	WCHAR dir[MAX_PATH];
+	PasteCacheGetDir(dir);
+	const PasteCacheCleanResult result = PasteCacheCleanup(dir, static_cast<unsigned>(iPasteCacheAutoCleanAgeDays),
+											static_cast<unsigned>(today));
+	if (result.deletedCount > 0) {
+		IniSetIntEx(INI_SECTION_NAME_FLAGS, L"PasteCacheLastCleanup", today, 0);
+		WCHAR size[64];
+		WCHAR count[24];
+		WCHAR fmt[128];
+		WCHAR text[256];
+		wsprintf(count, L"%u", result.deletedCount);
+		StrFormatByteSize(static_cast<LONGLONG>(result.deletedBytes), size, COUNTOF(size));
+		GetString(IDS_PCM_STATUS_AUTO, fmt, COUNTOF(fmt));
+		wsprintf(text, fmt, count, size);
+		StatusSetText(hwndStatus, STATUS_HELP, text);
+		StatusSetSimple(hwndStatus, TRUE);
+	}
 }
 
 //=============================================================================
@@ -1226,6 +1335,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 	case WM_TIMER:
 		if (wParam == ID_AUTOSAVETIMER) {
 			AutoSave_DoWork(FileSaveFlag_Default);
+		}
+		else if (wParam == ID_PASTECACHEAUTOCLEANTIMER) {
+			KillTimer(hwnd, ID_PASTECACHEAUTOCLEANTIMER);
+			PasteCacheAutoCleanOnStartup();
 		}
 		break;
 
@@ -2615,6 +2728,13 @@ void MsgInitMenu(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 	i = IDM_SET_BIDIRECTIONAL_NONE + iBidirectional;
 	CheckMenuRadioItem(hmenu, IDM_SET_BIDIRECTIONAL_NONE, IDM_SET_BIDIRECTIONAL_R2L, i, MF_BYCOMMAND);
 
+	CheckMenuRadioItem(hmenu, IDM_SET_CARETPOS_START, IDM_SET_CARETPOS_END,
+		bDefaultCaretAtEnd ? IDM_SET_CARETPOS_END : IDM_SET_CARETPOS_START, MF_BYCOMMAND);
+	CheckMenuRadioItem(hmenu, IDM_SET_VIEWPOS_START, IDM_SET_VIEWPOS_END,
+		bDefaultViewAtEnd ? IDM_SET_VIEWPOS_END : IDM_SET_VIEWPOS_START, MF_BYCOMMAND);
+
+	CheckCmd(hmenu, IDM_SET_MD_LIST_AUTOCOMPLETE, bMarkdownListAutoComplete);
+
 	CheckCmd(hmenu, IDM_SET_USE_INLINE_IME, bUseInlineIME);
 
 	CheckCmd(hmenu, IDM_VIEW_NOSAVERECENT, bSaveRecentFiles);
@@ -2634,6 +2754,7 @@ void MsgInitMenu(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 
 	i = IDM_VIEW_NOESCFUNC + static_cast<int>(iEscFunction);
 	CheckMenuRadioItem(hmenu, IDM_VIEW_NOESCFUNC, IDM_VIEW_ESCEXIT, i, MF_BYCOMMAND);
+	CheckCmd(hmenu, IDM_VIEW_CTRLJ_NEWLINE, bCtrlJNewline);
 
 	CheckCmd(hmenu, IDM_VIEW_SAVESETTINGS, bSaveSettings);
 
@@ -4249,6 +4370,29 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 		iBidirectional = SciCall_GetBidirectional();
 		break;
 
+	case IDM_SET_CARETPOS_START:
+	case IDM_SET_CARETPOS_END:
+		// task 004: applies to files opened without a stored view; takes effect
+		// on the next load and persists with the settings like Bidirectional.
+		bDefaultCaretAtEnd = LOWORD(wParam) == IDM_SET_CARETPOS_END;
+		break;
+
+	case IDM_SET_VIEWPOS_START:
+	case IDM_SET_VIEWPOS_END:
+		// task 004: view position is independent of caret position.
+		bDefaultViewAtEnd = LOWORD(wParam) == IDM_SET_VIEWPOS_END;
+		break;
+
+	case IDM_SET_MD_LIST_AUTOCOMPLETE:
+		// task 005: kedit-style list continuation in Markdown documents.
+		bMarkdownListAutoComplete = !bMarkdownListAutoComplete;
+		break;
+
+	case IDM_SET_PASTE_CACHE_MGR:
+		// task 002 / ADR 0014: manual + auto paste cache management.
+		PasteCacheMgrDlg(hwnd);
+		break;
+
 	case IDM_SET_USE_INLINE_IME:
 		bUseInlineIME = bUseInlineIME? SC_IME_WINDOWED : SC_IME_INLINE;
 		SciCall_SetIMEInteraction(bUseInlineIME);
@@ -4335,6 +4479,10 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	case IDM_VIEW_ESCMINIMIZE:
 	case IDM_VIEW_ESCEXIT:
 		iEscFunction = static_cast<EscFunction>(LOWORD(wParam) - IDM_VIEW_NOESCFUNC);
+		break;
+
+	case IDM_VIEW_CTRLJ_NEWLINE:
+		bCtrlJNewline = !bCtrlJNewline;
 		break;
 
 	case IDM_VIEW_SAVESETTINGS:
@@ -4546,6 +4694,13 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	case CMD_OPEN_CONTAINING_FOLDER:
 		EditOpenSelection(OpenSelectionType_ContainingFolder);
 		break;
+	case CMD_CTRLJ_ENTER:
+		if (bCtrlJNewline) {
+			// Routes through SCN_CHARADDED so auto indent and the Markdown
+			// list completion behave exactly like pressing Enter (task 009).
+			SciCall_AddText(1, "\n");
+		}
+		break;
 	case CMD_CALCULATE_EXPR:
 	case CMD_EVALUATE_JS_EXPR:
 		EditCalculateExpr(LOWORD(wParam));
@@ -4720,6 +4875,18 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 					UpdateStatusbar();
 				}
 
+				// task 007: re-highlight existing file/folder paths (throttled)
+				{
+					static DWORD s_lastPathScanTick = 0;
+					const DWORD now = GetTickCount();
+					if (scn->updated & SC_UPDATE_CONTENT) {
+						if (s_lastPathScanTick == 0 || now - s_lastPathScanTick >= 250) {
+							s_lastPathScanTick = now;
+							EditHighlightPathLinks();
+						}
+					}
+				}
+
 				// Brace Match
 				if (bMatchBraces) {
 					Sci_Position iPos = SciCall_GetCurrentPos();
@@ -4771,8 +4938,10 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				// Auto indent
 				if (ch == '\r' || ch == '\n') {
 					// in CRLF mode handle LF only...
-					if (autoCompletionConfig.bIndentText && ((SC_EOL_CRLF == iCurrentEOLMode && ch != '\n') || SC_EOL_CRLF != iCurrentEOLMode)) {
-						EditAutoIndent();
+					if ((SC_EOL_CRLF == iCurrentEOLMode && ch != '\n') || SC_EOL_CRLF != iCurrentEOLMode) {
+						if (!EditMarkdownListEnter() && autoCompletionConfig.bIndentText) {
+							EditAutoIndent();
+						}
 					}
 					return 0;
 				}
@@ -4949,13 +5118,17 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 		case SCN_HOTSPOTCLICK:
 		case SCN_INDICATORCLICK:
 			if ((scn->modifiers & SCMOD_CTRL)) {
-				// disable multiple selection to avoid two carets after Ctrl + click
-				SciCall_SetMultipleSelection(false);
-				SciCall_SetSel(scn->position, scn->position);
-				EditOpenSelection(OpenSelectionType_None);
-				const Sci_Position iAnchorPos = SciCall_GetAnchor();
-				const Sci_Position iCurrentPos = SciCall_GetCurrentPos();
-				PostMessage(hwnd, APPM_POST_HOTSPOTCLICK, iAnchorPos, iCurrentPos);
+				// let the edit layer decide: image/folder opens with shell,
+				// text-lexer files keep the in-editor open-and-jump behavior.
+				if (!EditOpenPathAtMouseCtrlClick(hwnd)) {
+					// disable multiple selection to avoid two carets after Ctrl + click
+					SciCall_SetMultipleSelection(false);
+					SciCall_SetSel(scn->position, scn->position);
+					EditOpenSelection(OpenSelectionType_None);
+					const Sci_Position iAnchorPos = SciCall_GetAnchor();
+					const Sci_Position iCurrentPos = SciCall_GetCurrentPos();
+					PostMessage(hwnd, APPM_POST_HOTSPOTCLICK, iAnchorPos, iCurrentPos);
+				}
 			}
 			break;
 
@@ -5221,6 +5394,22 @@ void LoadSettings() noexcept {
 	autoCompletionConfig.iMinNumberLength = max(iValue, MIN_AUTO_COMPLETION_NUMBER_LENGTH);
 	autoCompletionConfig.fAutoCompleteFillUpMask = section.GetInt(L"AutoCFillUpMask", AutoCompleteFillUpMask_Default);
 	autoCompletionConfig.fAutoInsertMask = section.GetInt(L"AutoInsertMask", AutoInsertMask_Default);
+
+	// ADR 0014: custom paste cache root. Env-var expansion keeps the default
+	// idiom (%TEMP%\...) usable; an unset or empty value restores the default.
+	{
+		LPCWSTR customDir = section.GetValue(L"PasteCacheDir");
+		if (StrNotEmpty(customDir)) {
+			WCHAR expanded[MAX_PATH];
+			if (ExpandEnvironmentStringsEx(customDir, expanded) && PasteCacheSetCustomDir(expanded)) {
+				// applied
+			} else {
+				PasteCacheSetCustomDir(customDir);
+			}
+		} else {
+			PasteCacheSetCustomDir(L"");
+		}
+	}
 	autoCompletionConfig.iAutoInsertCJKMask = section.GetInt(L"AutoInsertCJKMask", AutoInsertCJK_Default);
 	iValue = section.GetInt(L"AsmLineCommentChar", AsmLineCommentChar_Semicolon);
 	autoCompletionConfig.iAsmLineCommentChar = clamp<int>(iValue, AsmLineCommentChar_Semicolon, AsmLineCommentChar_At);
@@ -5319,6 +5508,7 @@ void LoadSettings() noexcept {
 
 	iValue = section.GetInt(L"EscFunction", EscFunction_None);
 	iEscFunction = clamp(static_cast<EscFunction>(iValue), EscFunction_None, EscFunction_Exit);
+	bCtrlJNewline = section.GetInt(L"CtrlJNewline", 1) != 0;
 
 	bAlwaysOnTop = section.GetBool(L"AlwaysOnTop", false);
 	bMinimizeToTray = section.GetBool(L"MinimizeToTray", false);
@@ -5334,6 +5524,27 @@ void LoadSettings() noexcept {
 
 	iValue = section.GetInt(L"Bidirectional", SC_BIDIRECTIONAL_DISABLED);
 	iBidirectional = clamp(iValue, SC_BIDIRECTIONAL_DISABLED, SC_BIDIRECTIONAL_R2L);
+
+	// task 004: default caret position for files opened without a stored view.
+	bDefaultCaretAtEnd = section.GetInt(L"DefaultCaretPos", 0) != 0;
+	bDefaultViewAtEnd = section.GetInt(L"DefaultViewPos", 0) != 0;
+	bMarkdownListAutoComplete = section.GetBool(L"MarkdownListAutoComplete", true);
+	// ADR 0014: auto-clean policy; disabled by default, ages are day-granular.
+	bPasteCacheAutoClean = section.GetBool(L"PasteCacheAutoClean", false);
+	iPasteCacheAutoCleanAgeDays = section.GetInt(L"PasteCacheAutoCleanAgeDays", 7);
+	if (iPasteCacheAutoCleanAgeDays < 1) {
+		iPasteCacheAutoCleanAgeDays = 1;
+	}
+	iPasteCacheAutoCleanIntervalDays = section.GetInt(L"PasteCacheAutoCleanIntervalDays", 3);
+	if (iPasteCacheAutoCleanIntervalDays < 1) {
+		iPasteCacheAutoCleanIntervalDays = 1;
+	}
+	// Manual cleanup remembers only its day count (ADR 0014); the destructive
+	// "all files" state is deliberately not persisted.
+	iPasteCacheManualCleanAgeDays = section.GetInt(L"PasteCacheManualCleanAgeDays", 7);
+	if (iPasteCacheManualCleanAgeDays < 1) {
+		iPasteCacheManualCleanAgeDays = 7;
+	}
 
 	iValue = section.GetInt(L"FontQuality", SC_EFF_QUALITY_LCD_OPTIMIZED);
 	iFontQuality = clamp(iValue, SC_EFF_QUALITY_DEFAULT, SC_EFF_QUALITY_LCD_OPTIMIZED);
@@ -5507,6 +5718,17 @@ void SaveSettings(bool bSaveSettingsNow) noexcept {
 	section.SetIntEx(L"HighlightCurrentLine", iValue, 10 + LineHighlightMode_OutlineFrame);
 	section.SetBoolEx(L"ShowIndentGuides", bShowIndentGuides, false);
 
+// ADR 0014: custom paste cache root; empty (default) writes nothing.
+	{
+		WCHAR dir[MAX_PATH];
+		const bool hasCustom = PasteCacheGetCustomDir(dir);
+		section.SetString(L"PasteCacheDir", hasCustom ? dir : nullptr);
+	}
+	section.SetBoolEx(L"PasteCacheAutoClean", bPasteCacheAutoClean, false);
+	section.SetIntEx(L"PasteCacheAutoCleanAgeDays", iPasteCacheAutoCleanAgeDays, 7);
+	section.SetIntEx(L"PasteCacheAutoCleanIntervalDays", iPasteCacheAutoCleanIntervalDays, 3);
+	section.SetIntEx(L"PasteCacheManualCleanAgeDays", iPasteCacheManualCleanAgeDays, 7);
+
 	section.SetBoolEx(L"AutoIndent", autoCompletionConfig.bIndentText, true);
 	section.SetIntEx(L"AutoCompleteOption", autoCompletionConfig.iCompleteOption, AutoCompletionOption_Default);
 	iValue = autoCompletionConfig.fCompleteScope | (autoCompletionConfig.fScanWordScope << 4);
@@ -5580,6 +5802,7 @@ void SaveSettings(bool bSaveSettingsNow) noexcept {
 	section.SetIntEx(L"AutoSavePeriod", dwAutoSavePeriod, AutoSaveDefaultPeriod);
 
 	section.SetIntEx(L"EscFunction", static_cast<int>(iEscFunction), EscFunction_None);
+	section.SetIntEx(L"CtrlJNewline", bCtrlJNewline ? 1 : 0, 1);
 	section.SetBoolEx(L"AlwaysOnTop", bAlwaysOnTop, false);
 	section.SetBoolEx(L"MinimizeToTray", bMinimizeToTray, false);
 	section.SetIntEx(L"TransparentMode", static_cast<int>(bTransparentMode), TransparentMode_None);
@@ -5588,6 +5811,9 @@ void SaveSettings(bool bSaveSettingsNow) noexcept {
 	section.SetBoolEx(L"WindowLayoutRTL", bWindowLayoutRTL, false);
 	section.SetIntEx(L"RenderingTechnology", iRenderingTechnology, SC_TECHNOLOGY_DIRECTWRITE);
 	section.SetIntEx(L"Bidirectional", iBidirectional, SC_BIDIRECTIONAL_DISABLED);
+	section.SetIntEx(L"DefaultCaretPos", bDefaultCaretAtEnd ? 1 : 0, 0);
+	section.SetIntEx(L"DefaultViewPos", bDefaultViewAtEnd ? 1 : 0, 0);
+	section.SetBoolEx(L"MarkdownListAutoComplete", bMarkdownListAutoComplete, true);
 	section.SetIntEx(L"FontQuality", iFontQuality, SC_EFF_QUALITY_LCD_OPTIMIZED);
 	iValue = static_cast<int>(iCaretStyle) + static_cast<int>(bBlockCaretForOVRMode)*10 + static_cast<int>(bBlockCaretOutSelection)*100;
 	section.SetIntEx(L"CaretStyle", iValue, CaretStyle_LineWidth1);
@@ -7046,9 +7272,28 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 				SciCall_LineScroll(0, iVisTopLine - iNewTopLine);
 				SciCall_SetXOffset(iXOffset);
 			}
+		} else if (SciCall_GetLength() > 0) {
+			// task 004 (reopened): caret and view positions are independent.
+			// Reached only without a stored view and without a command-line jump.
+			if (bDefaultCaretAtEnd || bDefaultViewAtEnd) {
+				SciCall_SetSel(bDefaultCaretAtEnd ? SciCall_GetLength() : 0,
+							   bDefaultCaretAtEnd ? SciCall_GetLength() : 0);
+				if (bDefaultViewAtEnd) {
+					const Sci_Line last = SciCall_VisibleFromDocLine(SciCall_GetLineCount() - 1);
+					const Sci_Line onScreen = SciCall_LinesOnScreen();
+					const Sci_Line top = (last > onScreen - 1) ? last - onScreen + 1 : 0;
+					SciCall_SetFirstVisibleLine(top);
+				} else {
+					SciCall_SetFirstVisibleLine(0);
+					SciCall_SetXOffset(0);
+				}
+			}
 		}
 
 		bInitDone = true;
+		// task 007: paint path hotspots immediately after load (UPDATEUI hook
+		// covers subsequent edits; this call guarantees the open case).
+		EditHighlightPathLinks();
 		//! workaround for blank statusbar after loading large file: SCN_UPDATEUI is fired after Scintilla become idle.
 		//DisableDelayedStatusBarRedraw(); // already set in MsgSize()
 		UpdateStatusbar();
@@ -7886,7 +8131,7 @@ void ShowNotifyIcon(HWND hwnd, bool bAdd) noexcept {
 	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	nid.uCallbackMessage = APPM_TRAYMESSAGE;
 	nid.hIcon = hTrayIcon;
-	lstrcpy(nid.szTip, WC_NOTEPAD4);
+	GetString(IDS_APPTITLE, nid.szTip, COUNTOF(nid.szTip));
 	Shell_NotifyIcon(bAdd ? NIM_ADD : NIM_DELETE, &nid);
 }
 

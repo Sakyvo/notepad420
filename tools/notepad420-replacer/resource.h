@@ -7,4 +7,5 @@
 #define IDC_SHORTCUT 2003
 #define IDC_EDITOR  2004
 #define IDC_ASSOCIATE 2005
+#define IDC_PROGRESS 2006
 #define IDI_APP     1

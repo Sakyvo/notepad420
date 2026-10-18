@@ -65,16 +65,14 @@ inline PasteTier PasteChooseTier(const ClipboardKinds &kinds, bool reverse = fal
 
 //=============================================================================
 //
-// Paste cache cap
+// Paste cache write verdict
 //
 
-/// Paste cache guard rails: 64 images / 128 MiB. Reaching the cap refuses the
-/// paste with a status bar hint; nothing is ever evicted automatically.
-constexpr std::size_t PasteCapCount = 64;
-constexpr std::uint64_t PasteCapBytes = 128ull * 1024 * 1024;
-
-/// Current occupancy of %TEMP%\notepad420-Paste, counted by enumerating the
-/// directory so the figure survives process restarts.
+/// ADR 0014: the paste cache has no occupancy guard rails (the former 64
+/// images / 128 MiB cap is gone; manual + optional automatic cleanup took
+/// over). `PasteCapVerdict::Full` now means "the paste cannot be served":
+/// the directory is missing or unwritable, or the disk is full. Nothing is
+/// ever refused because of how much is already cached.
 struct PasteCacheUsage {
 	std::size_t count;
 	std::uint64_t bytes;
@@ -85,15 +83,13 @@ enum class PasteCapVerdict {
 	Full,
 };
 
-/// Whether `addCount` more images totalling `addBytes` still fit.
+/// With the cap removed, occupancy never refuses a write. Kept as a seam so
+/// callers keep a single verdict function and tests can pin the behaviour.
 inline PasteCapVerdict PasteCheckCap(const PasteCacheUsage &usage,
 									 std::size_t addCount, std::uint64_t addBytes) noexcept {
-	if (usage.count + addCount > PasteCapCount) {
-		return PasteCapVerdict::Full;
-	}
-	if (usage.bytes + addBytes > PasteCapBytes) {
-		return PasteCapVerdict::Full;
-	}
+	(void)usage;
+	(void)addCount;
+	(void)addBytes;
 	return PasteCapVerdict::Ok;
 }
 

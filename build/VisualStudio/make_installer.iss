@@ -11,7 +11,7 @@
 #define MyAppPublisher "Sakyvo"
 #define MyAppExeName "notepad420.exe"
 #define MyReplacerExe "notepad420-replacer.exe"
-#define MyAppVersion GetStringFileInfo("..\..\\.target\app\notepad420.exe", "ProductVersion")
+#define MyAppVersion GetStringFileInfo("..\..\\.target\.distribution\app\notepad420.exe", "ProductVersion")
 
 [Setup]
 AppId={{7A6E2C31-8F52-4B7E-9E14-3C2D5A9F0420}
@@ -21,7 +21,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\notepad420
 DisableDirPage=no
 DisableProgramGroupPage=yes
-OutputDir=..\..\.target\installer
+OutputDir=..\..\.target\.distribution\installer
 OutputBaseFilename=notepad420-setup-x64-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
@@ -41,11 +41,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Files]
-Source: "..\..\.target\app\notepad420.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\.target\app\locale\zh-Hans\Notepad4.dll"; DestDir: "{app}\locale\zh-Hans"; Flags: ignoreversion recursesubdirs
-Source: "..\..\.target\app\notepad420.ini"; DestDir: "{app}"; Flags: onlyifdoesntexist
-Source: "..\..\.target\app\License.txt"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\.target\app\notepad420-replacer.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\.target\.distribution\app\notepad420.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "..\..\.target\.distribution\app\locale\zh-Hans\Notepad4.dll"; DestDir: "{app}\locale\zh-Hans"; Flags: ignoreversion restartreplace recursesubdirs
+Source: "..\..\.target\.distribution\app\notepad420.ini"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "..\..\.target\.distribution\app\License.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\.target\.distribution\app\notepad420-replacer.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 
 [Registry]
 ; ADR 0010:ProgId 归安装包持有,shell\open\command 与 DefaultIcon 永远指向本次安装目录。

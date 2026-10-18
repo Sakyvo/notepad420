@@ -27,6 +27,7 @@
 #include <commdlg.h>
 #include <uxtheme.h>
 #include "config.h"
+#include "PasteCache.h"
 #include "SciCall.h"
 #include "Helpers.h"
 #include "DarkMode.h"
@@ -2780,4 +2781,179 @@ INT_PTR CALLBACK SystemIntegrationDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, L
 
 void SystemIntegrationDlg(HWND hwnd) noexcept {
 	ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_SYSTEM_INTEGRATION), hwnd, SystemIntegrationDlgProc, 0);
+}
+
+//=============================================================================
+//
+// Paste Image Cache Management dialog (task 002 / ADR 0014)
+//
+namespace {
+
+int PcmTodayYYYYMMDD() noexcept {
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	return st.wYear * 10000 + st.wMonth * 100 + st.wDay;
+}
+
+// Byte sizes go through the shell helper used by the rest of the app (document
+// size status item, file-too-big warning). It localizes units, and it cannot
+// reproduce the "f MiB" bug that wsprintf + "%.1f" produced - wsprintf has no
+// floating point support and printed the conversion's literal "f".
+void PcmFormatSize(unsigned long long bytes, WCHAR *buf, int cch) noexcept {
+	StrFormatByteSize(static_cast<LONGLONG>(bytes), buf, cch);
+}
+
+void PcmUpdateUsage(HWND hwnd, LPCWSTR dir) noexcept {
+	WCHAR count[32];
+	WCHAR size[64];
+	WCHAR fmt[96];
+	WCHAR text[224];
+	const PasteCacheUsage usage = PasteCacheMeasure(dir);
+	wsprintf(count, L"%u", usage.count);
+	PcmFormatSize(usage.bytes, size, COUNTOF(size));
+	GetString(IDS_PCM_USAGE, fmt, COUNTOF(fmt));
+	wsprintf(text, fmt, count, size);
+	SetDlgItemText(hwnd, IDC_PCM_USAGE, text);
+}
+
+int PcmReadAgeDays(HWND hwnd, int id, int fallback) noexcept {
+	WCHAR num[16];
+	GetDlgItemText(hwnd, id, num, COUNTOF(num));
+	return PasteCacheParseAgeDays(num, fallback);
+}
+
+// The "all files" checkbox owns the input: checked means threshold 0 (delete
+// everything cache-named), so the day count is disabled and meaningless.
+void PcmSyncAgeField(HWND hwnd) noexcept {
+	const bool all = IsButtonChecked(hwnd, IDC_PCM_AGE_ALL);
+	EnableWindow(GetDlgItem(hwnd, IDC_PCM_AGE_EDIT), !all);
+	EnableWindow(GetDlgItem(hwnd, IDC_PCM_AGE_DAYS), !all);
+}
+
+unsigned PcmManualOlderThanDays(HWND hwnd) noexcept {
+	if (IsButtonChecked(hwnd, IDC_PCM_AGE_ALL)) {
+		return 0;
+	}
+	return static_cast<unsigned>(PcmReadAgeDays(hwnd, IDC_PCM_AGE_EDIT, PcmManualCleanAgeDays()));
+}
+
+INT_PTR CALLBACK PasteCacheMgrDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	switch (umsg) {
+	case WM_INITDIALOG: {
+		WCHAR dir[MAX_PATH];
+		PasteCacheGetDir(dir);
+		SetDlgItemText(hwnd, IDC_PCM_DIR_EDIT, dir);
+
+		// Manual cleanup: remembered day count (never the destructive "all"
+		// state, which always starts unchecked).
+		WCHAR num[16];
+		wsprintf(num, L"%d", PcmManualCleanAgeDays());
+		SetDlgItemText(hwnd, IDC_PCM_AGE_EDIT, num);
+		CheckDlgButton(hwnd, IDC_PCM_AGE_ALL, BST_UNCHECKED);
+		PcmSyncAgeField(hwnd);
+
+		CheckDlgButton(hwnd, IDC_PCM_AUTO_ENABLE, PcmAutoCleanEnabled() ? BST_CHECKED : BST_UNCHECKED);
+		wsprintf(num, L"%d", PcmAutoCleanAgeDays());
+		SetDlgItemText(hwnd, IDC_PCM_AUTO_AGE_EDIT, num);
+		wsprintf(num, L"%d", PcmAutoCleanIntervalDays());
+		SetDlgItemText(hwnd, IDC_PCM_AUTO_INTERVAL_EDIT, num);
+
+		// Cap the day fields to 9 digits: ES_NUMBER alone still allows a
+		// pasted megabyte of digits.
+		SendDlgItemMessage(hwnd, IDC_PCM_AGE_EDIT, EM_SETLIMITTEXT, 6, 0);
+		SendDlgItemMessage(hwnd, IDC_PCM_AUTO_AGE_EDIT, EM_SETLIMITTEXT, 6, 0);
+		SendDlgItemMessage(hwnd, IDC_PCM_AUTO_INTERVAL_EDIT, EM_SETLIMITTEXT, 6, 0);
+
+		PcmUpdateUsage(hwnd, dir);
+		DarkMode_InitDialog(hwnd);
+	}
+	return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDC_PCM_DIR_BROWSE: {
+			WCHAR dir[MAX_PATH];
+			GetDlgItemText(hwnd, IDC_PCM_DIR_EDIT, dir, COUNTOF(dir));
+			WCHAR picked[MAX_PATH];
+			if (GetDirectory(hwnd, 0, picked, StrIsEmpty(dir) ? nullptr : dir)) {
+				SetDlgItemText(hwnd, IDC_PCM_DIR_EDIT, picked);
+				PcmUpdateUsage(hwnd, picked);
+			}
+		}
+		return TRUE;
+
+		case IDC_PCM_DIR_RESET: {
+			WCHAR dir[MAX_PATH];
+			PasteCacheGetDefaultDir(dir);
+			SetDlgItemText(hwnd, IDC_PCM_DIR_EDIT, dir);
+			PcmUpdateUsage(hwnd, dir);
+		}
+		return TRUE;
+
+		case IDC_PCM_CLEAN_BUTTON: {
+			WCHAR dir[MAX_PATH];
+			GetDlgItemText(hwnd, IDC_PCM_DIR_EDIT, dir, COUNTOF(dir));
+			const unsigned olderThanDays = PcmManualOlderThanDays(hwnd);
+
+			const PasteCacheCleanResult preview = PasteCachePreviewCleanup(dir, olderThanDays, PcmTodayYYYYMMDD());
+			if (preview.deletedCount == 0) {
+				MsgBox(MB_ICONINFORMATION | MB_OK, IDS_PCM_NOTHING_TO_CLEAN);
+			} else {
+				WCHAR size[64];
+				WCHAR count[24];
+				PcmFormatSize(preview.deletedBytes, size, COUNTOF(size));
+				wsprintf(count, L"%u", preview.deletedCount);
+				// Numbers come from the preview; the commit re-enumerates, so a
+				// file that appeared in between is handled by the real pass.
+				if (MsgBox(MB_ICONQUESTION | MB_OKCANCEL, IDS_PCM_CONFIRM_CLEANUP, count, size) == IDOK) {
+					PasteCacheCleanup(dir, olderThanDays, PcmTodayYYYYMMDD());
+					IniSetIntEx(INI_SECTION_NAME_FLAGS, L"PasteCacheLastCleanup", PcmTodayYYYYMMDD(), 0);
+					PcmUpdateUsage(hwnd, dir);
+				}
+			}
+		}
+		return TRUE;
+
+		case IDC_PCM_AGE_ALL:
+			PcmSyncAgeField(hwnd);
+			return TRUE;
+
+		case IDOK: {
+			WCHAR dir[MAX_PATH];
+			GetDlgItemText(hwnd, IDC_PCM_DIR_EDIT, dir, COUNTOF(dir));
+			TrimString(dir);
+
+			WCHAR defDir[MAX_PATH];
+			PasteCacheGetDefaultDir(defDir);
+			// Settings keep the user-typed value; the runtime applies it through
+			// the settings layer (env expansion, ADR 0014).
+			const bool toDefault = StrIsEmpty(dir) || lstrcmpi(dir, defDir) == 0;
+			PcmCommitDirSetting(toDefault ? L"" : dir);
+
+			const int age = PcmReadAgeDays(hwnd, IDC_PCM_AUTO_AGE_EDIT, PcmAutoCleanAgeDays());
+			const int interval = PcmReadAgeDays(hwnd, IDC_PCM_AUTO_INTERVAL_EDIT, PcmAutoCleanIntervalDays());
+			PcmCommitAutoCleanSetting(IsButtonChecked(hwnd, IDC_PCM_AUTO_ENABLE), age, interval);
+			// Manual cleanup: remember the day count only (ADR 0014); the "all"
+			// checkbox is explicitly not persisted - it starts unchecked every
+			// time so the destructive choice is always made afresh. The remembered
+			// count comes from the field, not from this run's scope, so checking
+			// "all" does not wipe what the user last typed.
+			PcmCommitManualCleanAgeDays(PcmReadAgeDays(hwnd, IDC_PCM_AGE_EDIT, PcmManualCleanAgeDays()));
+			EndDialog(hwnd, IDOK);
+		}
+		return TRUE;
+
+		case IDCANCEL:
+			EndDialog(hwnd, IDCANCEL);
+			return TRUE;
+		}
+		return FALSE;
+	}
+	return FALSE;
+}
+
+}	// namespace
+
+void PasteCacheMgrDlg(HWND hwnd) noexcept {
+	ThemedDialogBoxParam(g_hInstance, MAKEINTRESOURCE(IDD_PASTE_CACHE_MGR), hwnd, PasteCacheMgrDlgProc, 0);
 }

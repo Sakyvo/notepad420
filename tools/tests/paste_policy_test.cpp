@@ -67,29 +67,16 @@ static void TestReversePasteOnlyReversesNonText() {
 		"reverse paste never rewrites text");
 }
 
-static void TestCacheCap() {
-	// Empty cache accepts the first image.
+static void TestCacheCapRemoved() {
+	// ADR 0014: the 64 images / 128 MiB guard rail is gone. Occupancy never
+	// refuses a write; every non-empty cache accepts another image.
 	CHECK(PasteCheckCap({0, 0}, 1, 1024) == PasteCapVerdict::Ok, "first image fits");
-
-	// Exactly at the count cap is still allowed; one more is refused.
-	CHECK(PasteCheckCap({PasteCapCount - 1, 0}, 1, 0) == PasteCapVerdict::Ok,
-		"reaching the count cap exactly is allowed");
-	CHECK(PasteCheckCap({PasteCapCount, 0}, 1, 0) == PasteCapVerdict::Full,
-		"one past the count cap is refused");
-
-	// Byte cap behaves the same way.
-	CHECK(PasteCheckCap({0, PasteCapBytes - 10}, 1, 10) == PasteCapVerdict::Ok,
-		"reaching the byte cap exactly is allowed");
-	CHECK(PasteCheckCap({0, PasteCapBytes - 10}, 1, 11) == PasteCapVerdict::Full,
-		"one byte past the byte cap is refused");
-
-	// A batch that would exceed the cap is refused as a whole.
-	CHECK(PasteCheckCap({PasteCapCount - 2, 0}, 3, 0) == PasteCapVerdict::Full,
-		"batch exceeding the count cap is refused");
-
-	// Already-full cache refuses anything, even a zero-byte item.
-	CHECK(PasteCheckCap({PasteCapCount, PasteCapBytes}, 1, 0) == PasteCapVerdict::Full,
-		"full cache refuses everything");
+	CHECK(PasteCheckCap({1024, 0}, 1, 0) == PasteCapVerdict::Ok,
+		"occupancy never refuses a write");
+	CHECK(PasteCheckCap({0, 512ull * 1024 * 1024}, 1, 1024) == PasteCapVerdict::Ok,
+		"byte occupancy never refuses a write");
+	CHECK(PasteCheckCap({100000, 512ull * 1024 * 1024}, 1, 0) == PasteCapVerdict::Ok,
+		"an enormous cache still accepts another image");
 }
 
 static void TestPasteFileName() {
@@ -467,7 +454,7 @@ static void TestExtensionToMime() {
 int main() {
 	TestArbitrationPriority();
 	TestReversePasteOnlyReversesNonText();
-	TestCacheCap();
+	TestCacheCapRemoved();
 	TestPasteFileName();
 	TestDataUriPrecheck();
 	TestDataUriScanner();

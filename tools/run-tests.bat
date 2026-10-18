@@ -82,5 +82,23 @@ IF !ERRORLEVEL! NEQ 0 ( ECHO [ERROR] edit_cjk_mask_test compilation failed & SET
   IF !ERRORLEVEL! NEQ 0 SET "RC=1"
 )
 
+CL /nologo /std:c++17 /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /Fe:.target\tests\markdown_list_test.exe /Fo:.target\tests\obj\ tools\tests\markdown_list_test.cpp src\MarkdownList.cpp /I src
+IF !ERRORLEVEL! NEQ 0 ( ECHO [ERROR] markdown_list_test compilation failed & SET "RC=1" ) ELSE (
+  ".target\tests\markdown_list_test.exe"
+  IF !ERRORLEVEL! NEQ 0 SET "RC=1"
+)
+
+CL /nologo /std:c++17 /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /Fe:.target\tests\path_link_test.exe /Fo:.target\tests\obj\ tools\tests\path_link_test.cpp src\PathLink.cpp /I src
+IF !ERRORLEVEL! NEQ 0 ( ECHO [ERROR] path_link_test compilation failed & SET "RC=1" ) ELSE (
+  ".target\tests\path_link_test.exe"
+  IF !ERRORLEVEL! NEQ 0 SET "RC=1"
+)
+
+CL /nologo /std:c++17 /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /Fe:.target\tests\dialog_geometry_test.exe /Fo:.target\tests\obj\ tools\tests\dialog_geometry_test.cpp
+IF !ERRORLEVEL! NEQ 0 ( ECHO [ERROR] dialog_geometry_test compilation failed & SET "RC=1" ) ELSE (
+  ".target\tests\dialog_geometry_test.exe"
+  IF !ERRORLEVEL! NEQ 0 SET "RC=1"
+)
+
 IF !RC! NEQ 0 ( ECHO [FAIL] unit tests failed ) ELSE ( ECHO [OK] unit tests passed )
 ENDLOCAL & EXIT /B %RC%

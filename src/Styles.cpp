@@ -673,6 +673,11 @@ static void Style_LoadOneEx(PEDITLEXER pLex, IniSectionParser &section, WCHAR *p
 	LPCWSTR themePath = GetStyleThemeFilePath();
 	GetPrivateProfileSection(pLex->pszName, pIniSectionBuf, cchIniSection, themePath);
 
+	// factory default: enable for every lexer; must be set before Parse so the
+	// no-section path (fresh install, clean portable ini) also gets it — an
+	// explicit 0 in the ini still overrides in the else branch below.
+	pLex->bUseDefaultCodeStyle = true;
+
 	const UINT iStyleCount = pLex->iStyleCount;
 	LPWSTR szValue = pLex->szStyleBuf;
 	if (szValue == nullptr) {
@@ -684,7 +689,8 @@ static void Style_LoadOneEx(PEDITLEXER pLex, IniSectionParser &section, WCHAR *p
 			lstrcpy(szValue, pLex->Styles[i].pszDefault);
 		}
 	} else {
-		pLex->bUseDefaultCodeStyle = section.GetBool(L"UseDefaultCodeStyle", pLex->bUseDefaultCodeStyle);
+		// factory default already set above; ini key (if present) overrides.
+		pLex->bUseDefaultCodeStyle = section.GetBool(L"UseDefaultCodeStyle", true);
 		for (UINT i = 0; i < iStyleCount; szValue += MAX_EDITSTYLE_VALUE_SIZE, i++) {
 			LPCWSTR value = section.GetValueImpl(pLex->Styles[i].pszName, pLex->Styles[i].iNameLen);
 			if (value != nullptr) {
@@ -952,7 +958,7 @@ void Style_Save() noexcept {
 
 			memset(pIniSectionBuf, 0, 2*sizeof(WCHAR));
 			section.next = pIniSectionBuf;
-			section.SetBoolEx(L"UseDefaultCodeStyle", pLex->bUseDefaultCodeStyle, pLex->rid != NP2LEX_TEXTFILE);
+			section.SetBoolEx(L"UseDefaultCodeStyle", pLex->bUseDefaultCodeStyle, true);
 			const UINT iStyleCount = pLex->iStyleCount;
 			LPCWSTR szValue = pLex->szStyleBuf;
 			for (UINT i = 0; i < iStyleCount; i++, szValue += MAX_EDITSTYLE_VALUE_SIZE) {
@@ -1003,7 +1009,8 @@ bool Style_Import(HWND hwnd) {
 				if (!section.Parse(pIniSectionBuf)) {
 					continue;
 				}
-				pLex->bUseDefaultCodeStyle = section.GetBool(L"UseDefaultCodeStyle", pLex->bUseDefaultCodeStyle);
+				// factory default: enabled for every lexer (same as Style_LoadOneEx)
+				pLex->bUseDefaultCodeStyle = section.GetBool(L"UseDefaultCodeStyle", true);
 				const UINT iStyleCount = pLex->iStyleCount;
 				LPWSTR szValue = pLex->szStyleBuf;
 				for (UINT i = 0; i < iStyleCount; i++, szValue += MAX_EDITSTYLE_VALUE_SIZE) {
@@ -1081,7 +1088,7 @@ static void Style_ResetAll(bool resetColor) noexcept {
 			lstrcpy(pLex->szExtensions, pLex->pszDefExt);
 		}
 		pLex->bStyleChanged = true;
-		pLex->bUseDefaultCodeStyle = (pLex->rid == NP2LEX_TEXTFILE);
+		pLex->bUseDefaultCodeStyle = true;	// factory default: enabled for every lexer
 		if (resetColor) {
 			const UINT iStyleCount = pLex->iStyleCount;
 			LPWSTR szValue = pLex->szStyleBuf;
@@ -1559,6 +1566,17 @@ void Style_SetLexer(PEDITLEXER pLexNew, BOOL bLexerChanged) noexcept {
 	Style_SetDefaultStyle(GlobalStyleIndex_LineNumber);
 	Style_DefineIndicator(GlobalStyleIndex_MatchBrace, IndicatorNumber_MatchBrace, INDIC_ROUNDBOX);
 	Style_DefineIndicator(GlobalStyleIndex_MatchBraceError, IndicatorNumber_MatchBraceError, INDIC_ROUNDBOX);
+	// task 007: path links inherit the URL (STYLE_LINK) look: same fore color, underline.
+	{
+		const int indicStyle = INDIC_TEXTFORE;
+		SciCall_IndicSetStyle(IndicatorNumber_PathLink, indicStyle);
+		COLORREF rgb;
+		LPCWSTR szValue = lexGlobal.GetStyleValue(GlobalStyleIndex_Link);
+		if (!Style_StrGetForeColor(szValue, &rgb)) {
+			rgb = RGB(0x64, 0x80, 0x00);
+		}
+		SciCall_IndicSetFore(IndicatorNumber_PathLink, rgb);
+	}
 	Style_SetDefaultStyle(GlobalStyleIndex_IndentationGuide);
 
 	//! begin Selection

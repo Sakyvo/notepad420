@@ -6,6 +6,7 @@
  * manifest 声明 requireAdministrator：启动即由系统弹 UAC，进程内恒为管理员。
  */
 #include <windows.h>
+#include <commctrl.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <string>
@@ -14,12 +15,131 @@
 #include "ReplacerOps.h"
 #include "resource.h"
 
+#pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
 namespace {
+
+/// UI 线程消息：进度与完成。
+constexpr UINT WM_APP_PROGRESS = WM_APP + 1;	// wParam = pos, lParam = range
+constexpr UINT WM_APP_DONE     = WM_APP + 2;	// lParam = WorkJob*（UI 线程接管所有权）
+
+/// 前向声明：工作线程要用。
+bool CreateDesktopShortcut(std::wstring &error);
+
+/// 进度回调：工作线程上运行，只能 PostMessage 回 UI 线程。
+/// 各阶段局部进度在此换算为全局累积位置；g_progBase/g_progTotal 由工作线程维护。
+static HWND g_hwndDlg = nullptr;
+HWND g_hwndProgress = nullptr;
+static unsigned g_progBase = 0;		// 当前操作在全局进度中的起点
+static unsigned g_progTotal = 0;		// 全阶段总步数（工作线程开局一次算定）
+
+void ReplacerProgress(unsigned pos, unsigned range) {
+	(void)range;	// 各阶段自带 range 已折算进 g_progBase
+	if (g_hwndDlg != nullptr && g_progTotal > 0) {
+		PostMessageW(g_hwndDlg, WM_APP_PROGRESS, g_progBase + pos, g_progTotal);
+	}
+}
+
+void SetBusy(HWND hwnd, bool busy) {
+	EnableWindow(GetDlgItem(hwnd, ID_REPLACE), !busy);
+	EnableWindow(GetDlgItem(hwnd, ID_RESTORE), !busy);
+	if (busy) {
+		SendMessageW(g_hwndProgress, PBM_SETPOS, 0, 0);
+		SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+	} else {
+		SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+		SendMessageW(g_hwndProgress, PBM_SETPOS, 0, 0);		// 完成后进度条归零
+	}
+}
+
+/// 工作线程载荷:一次「替换/恢复」的全部输入与产出。
+struct WorkJob {
+	bool bReplace;
+	bool makeShortcut;
+	bool associate;
+	bool setEditor;
+	int rc = 1;
+	std::wstring error;
+	std::wstring errTitle;
+	std::wstring doneMsg;
+};
+
+DWORD WINAPI WorkThreadProc(LPVOID lparam) {
+	WorkJob *job = static_cast<WorkJob *>(lparam);
+	// 本线程要用 COM(CreateDesktopShortcut → IShellLink),未初始化会隐死或拒绝。
+	const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+	// 全阶段步数一次算定,进度条设一次 range;各阶段走自己的局部 ticks。
+	const unsigned stepsReplace = 7;       // 3 targets + IFEO + UserChoice + ProgId + notify
+	const unsigned stepsAssociate = 26;    // 25 exts + notify
+	const unsigned stepsEditor = 1;
+	const unsigned stepsShortcut = 1;
+	if (job->bReplace) {
+		g_progTotal = stepsReplace
+					+ (job->associate ? stepsAssociate : 0)
+					+ (job->setEditor ? stepsEditor : 0)
+					+ (job->makeShortcut ? stepsShortcut : 0);
+	} else {
+		g_progTotal = stepsReplace;		// restore 与 replace 同构:7 steps
+	}
+	g_progBase = 0;
+	ReplacerProgress(0, 0);		// 推一次(0, total),让 UI 把 range 定拢
+
+	if (job->bReplace) {
+		job->rc = ReplacerOps::RunReplaceOperation(job->error, ReplacerProgress);
+		g_progBase = (job->rc == 0) ? stepsReplace : g_progTotal;
+		if (job->rc == 0 && job->associate) {
+			if (ReplacerOps::RunAssociateOperation(job->error, ReplacerProgress) != 0) {
+				job->rc = 5; job->errTitle = L"notepad420 关联失败";
+			}
+			g_progBase += stepsAssociate;
+		}
+		if (job->rc == 0 && job->setEditor) {
+			if (ReplacerOps::RunEditorOperation(job->error, ReplacerProgress) != 0) {
+				job->rc = 6; job->errTitle = L"notepad420 环境变量失败";
+			}
+			g_progBase += stepsEditor;
+		}
+		if (job->rc == 0 && job->makeShortcut) {
+			if (!CreateDesktopShortcut(job->error)) {
+				job->rc = 1; job->errTitle = L"notepad420 快捷方式失败";
+			}
+			ReplacerProgress(stepsShortcut, 0);		// 内部无 tick,手动补上该步
+			g_progBase += stepsShortcut;
+		}
+		if (job->rc == 0) {
+			std::wstring msg = L"替换完成";
+			if (job->associate) {
+				msg += L"\n文本文件默认打开方式已改为notepad420";
+			}
+			if (job->setEditor) {
+				msg += L"\nEDITOR & VISUAL已指向" + ReplacerOps::LocalNotepad420Path();
+				msg += L"\n环境变量更改需重启终端生效";
+			}
+			job->doneMsg = msg;
+		} else if (job->errTitle.empty()) {
+			job->errTitle = L"notepad420 替换失败";
+		}
+	} else {
+		g_progBase = 0;
+		job->rc = ReplacerOps::RunRestoreOperation(job->error, ReplacerProgress);
+		if (job->rc == 0) {
+			job->doneMsg = L"恢复完成";
+		} else {
+			job->errTitle = L"notepad420 恢复失败";
+		}
+	}
+	// 最后的 COM 卸载与结果投递。COM错误不拦截结果(gurantee: CoUninit 只在 hr=S_OK 时)。
+	if (SUCCEEDED(hr)) {
+		CoUninitialize();
+	}
+	PostMessageW(g_hwndDlg, WM_APP_DONE, 0, reinterpret_cast<LPARAM>(job));
+	return 0;
+}
 
 /// 桌面快捷方式 notepad420.lnk → 同目录 notepad420.exe。
 bool CreateDesktopShortcut(std::wstring &error) {
@@ -37,62 +157,61 @@ bool CreateDesktopShortcut(std::wstring &error) {
 	return AclGuard::CreateShortcut(lnk, ReplacerOps::LocalNotepad420Path(), error) == ERROR_SUCCESS;
 }
 
-INT_PTR CALLBACK MainDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM /*lParam*/) {
+INT_PTR CALLBACK MainDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch (msg) {
 	case WM_INITDIALOG:
+		CheckDlgButton(hwnd, IDC_ASSOCIATE, BST_CHECKED);
 		CheckDlgButton(hwnd, IDC_EDITOR, BST_CHECKED);
+		SendMessageW(GetDlgItem(hwnd, IDC_PROGRESS), PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+		g_hwndProgress = GetDlgItem(hwnd, IDC_PROGRESS);
+		g_hwndDlg = hwnd;
 		return TRUE;
+	case WM_APP_PROGRESS: {
+		const unsigned pos = static_cast<unsigned>(wParam);
+		const unsigned range = static_cast<unsigned>(lParam);
+		if (range != static_cast<unsigned>(SendMessageW(g_hwndProgress, PBM_GETRANGE, FALSE, 0))) {
+			SendMessageW(g_hwndProgress, PBM_SETRANGE, 0, MAKELPARAM(0, static_cast<WORD>(range)));
+		}
+		SendMessageW(g_hwndProgress, PBM_SETPOS, pos, 0);
+		return TRUE;
+	}
+	case WM_APP_DONE: {
+		WorkJob *job = reinterpret_cast<WorkJob *>(lParam);
+		SetBusy(hwnd, false);
+		if (job->rc == 0) {
+			MessageBoxW(hwnd, job->doneMsg.c_str(), L"notepad420", MB_ICONINFORMATION);
+		} else {
+			MessageBoxW(hwnd, job->error.c_str(), job->errTitle.empty() ? L"notepad420" : job->errTitle.c_str(), MB_ICONSTOP);
+		}
+		delete job;
+		return TRUE;
+	}
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
-		case ID_REPLACE: {
-			std::wstring error;
-			const int rc = ReplacerOps::RunReplaceOperation(error);
-			if (rc == 0) {
-				const bool makeShortcut =
-					IsDlgButtonChecked(hwnd, IDC_SHORTCUT) == BST_CHECKED;
-				const bool associate =
-					IsDlgButtonChecked(hwnd, IDC_ASSOCIATE) == BST_CHECKED;
-				const bool setEditor =
-					IsDlgButtonChecked(hwnd, IDC_EDITOR) == BST_CHECKED;
-				if (associate && ReplacerOps::RunAssociateOperation(error) != 0) {
-					MessageBoxW(hwnd, error.c_str(), L"notepad420 关联失败", MB_ICONSTOP);
-					return TRUE;
-				}
-				if (setEditor && ReplacerOps::RunEditorOperation(error) != 0) {
-					MessageBoxW(hwnd, error.c_str(), L"notepad420 环境变量失败", MB_ICONSTOP);
-					return TRUE;
-				}
-				if (makeShortcut && !CreateDesktopShortcut(error)) {
-					MessageBoxW(hwnd, error.c_str(), L"notepad420 快捷方式失败", MB_ICONSTOP);
-					return TRUE;
-				}
-				std::wstring doneMsg = L"替换完成";
-				if (associate) {
-					doneMsg += L"\n\n文本扩展默认打开方式已指向 notepad420";
-				}
-				if (setEditor) {
-					doneMsg += L"\n\nEDITOR / VISUAL 已指向 " + ReplacerOps::LocalNotepad420Path()
-						+ L"\n\n请重启你正在使用的终端(Pi/pebrel/PowerShell 等)后再 Ctrl+G 生效";
-				}
-				MessageBoxW(hwnd, doneMsg.c_str(), L"notepad420", MB_ICONINFORMATION);
-			} else {
-				MessageBoxW(hwnd, error.c_str(), L"notepad420 替换失败", MB_ICONSTOP);
-			}
-			return TRUE;
-		}
+		case ID_REPLACE:
 		case ID_RESTORE: {
-			std::wstring error;
-			const int rc = ReplacerOps::RunRestoreOperation(error);
-			if (rc == 0) {
-				MessageBoxW(hwnd, L"恢复完成", L"notepad420", MB_ICONINFORMATION);
-			} else {
-				MessageBoxW(hwnd, error.c_str(), L"notepad420 恢复失败", MB_ICONSTOP);
+			WorkJob *job = new WorkJob;
+			job->bReplace = (LOWORD(wParam) == ID_REPLACE);
+			job->makeShortcut = IsDlgButtonChecked(hwnd, IDC_SHORTCUT) == BST_CHECKED;
+			job->associate = IsDlgButtonChecked(hwnd, IDC_ASSOCIATE) == BST_CHECKED;
+			job->setEditor = IsDlgButtonChecked(hwnd, IDC_EDITOR) == BST_CHECKED;
+			SetBusy(hwnd, true);
+			HANDLE thread = CreateThread(nullptr, 0, WorkThreadProc, job, 0, nullptr);
+			if (thread == nullptr) {
+				delete job;
+				SetBusy(hwnd, false);
+				MessageBoxW(hwnd, L"未能创建工作线程", L"notepad420", MB_ICONSTOP);
+				return TRUE;
 			}
+			CloseHandle(thread);
 			return TRUE;
 		}
 		}
 		break;
 	case WM_CLOSE:
+		if (g_hwndProgress && !IsWindowEnabled(GetDlgItem(hwnd, ID_REPLACE))) {
+			return TRUE;		// 任务进行中,禁止关哌
+		}
 		EndDialog(hwnd, 0);
 		return TRUE;
 	}
@@ -211,6 +330,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR cmdLine, int) {
 					L"notepad420", MB_ICONSTOP);
 		return 1;
 	}
+	// 进度条控件(msctls_progress32)在 comctl32 v5 内,需初始化一次。
+	INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_PROGRESS_CLASS };
+	InitCommonControlsEx(&icc);
 	DialogBoxParamW(hInstance, MAKEINTRESOURCEW(IDD_MAIN), nullptr, MainDlgProc, 0);
 	CoUninitialize();
 	return 0;

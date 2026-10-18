@@ -1,6 +1,6 @@
 @ECHO OFF
 @rem Build notepad420 installer with Inno Setup (ISCC.exe).
-@rem Output: .target\installer\notepad420-setup-x64-<version>.exe
+@rem Output: .target\.distribution\installer\notepad420-setup-x64-<version>.exe
 SETLOCAL ENABLEEXTENSIONS
 CD /D %~dp0
 
@@ -12,12 +12,12 @@ IF NOT EXIST "%ISCC%" (
   EXIT /B 1
 )
 
-IF NOT EXIST "..\..\.target\app\notepad420.exe" (
-  ECHO [ERROR] .target\app\notepad420.exe missing. Build it first.
+IF NOT EXIST "..\..\.target\.distribution\app\notepad420.exe" (
+  ECHO [ERROR] .target\.distribution\app\notepad420.exe missing. Build it first.
   EXIT /B 1
 )
 
-IF NOT EXIST "..\..\.target\installer" MD "..\..\.target\installer"
+IF NOT EXIST "..\..\.target\.distribution\installer" MD "..\..\.target\.distribution\installer"
 
 "%ISCC%" make_installer.iss
 IF %ERRORLEVEL% NEQ 0 (
